@@ -1,5 +1,5 @@
 import telebot
-import sqlite3
+import psycopg2
 import time
 import threading
 
@@ -8,57 +8,82 @@ import threading
 # ==========================================
 BOT_TOKEN = "8886077155:AAET1U9CXGZtaiIBLYxAutzFKFe-BkQpVno"
 OWNER_ID = 7974865879
+DATABASE_URL = "postgresql://postgres.fdfcifwziqrqqjimtqgm:zaykaunghtet704%23%40@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres"
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ==========================================
-# DATABASE SETUP
+# SUPABASE DATABASE SETUP
 # ==========================================
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL)
+
 def init_db():
-    conn = sqlite3.connect('bot_data.db')
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
+            user_id BIGINT PRIMARY KEY,
             first_name TEXT,
             username TEXT
         )
     ''')
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS groups (
-            chat_id INTEGER PRIMARY KEY,
+            chat_id BIGINT PRIMARY KEY,
             title TEXT,
-            added_by_id INTEGER,
+            added_by_id BIGINT,
             added_by_name TEXT
         )
     ''')
     conn.commit()
+    cursor.close()
     conn.close()
 
 init_db()
 
 def save_user(user):
-    conn = sqlite3.connect('bot_data.db')
-    cursor = conn.cursor()
-    cursor.execute('INSERT OR REPLACE INTO users VALUES (?, ?, ?)', 
-                   (user.id, user.first_name, user.username))
-    conn.commit()
-    conn.close()
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO users (user_id, first_name, username)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (user_id) DO UPDATE 
+            SET first_name = EXCLUDED.first_name, username = EXCLUDED.username
+        ''', (user.id, user.first_name, user.username))
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"Error saving user: {e}")
 
 def save_group(chat_id, title, added_by_id, added_by_name):
-    conn = sqlite3.connect('bot_data.db')
-    cursor = conn.cursor()
-    cursor.execute('INSERT OR REPLACE INTO groups VALUES (?, ?, ?, ?)', 
-                   (chat_id, title, added_by_id, added_by_name))
-    conn.commit()
-    conn.close()
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO groups (chat_id, title, added_by_id, added_by_name)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (chat_id) DO UPDATE 
+            SET title = EXCLUDED.title, added_by_id = EXCLUDED.added_by_id, added_by_name = EXCLUDED.added_by_name
+        ''', (chat_id, title, added_by_id, added_by_name))
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"Error saving group: {e}")
 
 def delete_group(chat_id):
-    conn = sqlite3.connect('bot_data.db')
-    cursor = conn.cursor()
-    cursor.execute('DELETE FROM groups WHERE chat_id = ?', (chat_id,))
-    conn.commit()
-    conn.close()
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM groups WHERE chat_id = %s', (chat_id,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"Error deleting group: {e}")
 
 def is_owner(user_id):
     return user_id == OWNER_ID
@@ -67,40 +92,40 @@ def is_owner(user_id):
 # 🔄 ANTI-SLEEP & AUTO-CHECK SYSTEM
 # ==========================================
 
-# 1. Server အိပ်မပျော်အောင် 5 မိနစ်တစ်ကြိမ် ပုံမှန် ပို့ပေးသည့် စနစ်
 def keep_alive():
     while True:
-        time.sleep(300) # ၅ မိနစ်စောင့်သည်
+        time.sleep(300)
         try:
-            bot.get_me() # API ကို အလုပ်လုပ်ခိုင်းပြီး Server နိုးအောင်လုပ်သည်
+            bot.get_me()
         except Exception:
             pass
 
-# Keep-alive ကို Background Thread အဖြစ် စတင်ခြင်း
 threading.Thread(target=keep_alive, daemon=True).start()
 
-# 2. Database ထဲရှိ ဂျီပီများ အလုပ်လုပ်/မလုပ် အလိုအလျောက် စစ်ဆေးသည့် Function
 def check_all_groups():
-    conn = sqlite3.connect('bot_data.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT chat_id, title FROM groups')
-    groups = cursor.fetchall()
-    conn.close()
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT chat_id, title FROM groups')
+        groups = cursor.fetchall()
+        cursor.close()
+        conn.close()
 
-    active_count = 0
-    removed_count = 0
+        active_count = 0
+        removed_count = 0
 
-    for chat_id, title in groups:
-        try:
-            # Group ထဲမှာ Bot ရှိသေးလား စစ်ဆေးခြင်း
-            bot.get_chat(chat_id)
-            active_count += 1
-        except Exception:
-            # Bot မရှိတော့ပါက စာရင်းထဲမှ အလိုအလျောက် ဖျက်ပစ်ခြင်း
-            delete_group(chat_id)
-            removed_count += 1
+        for chat_id, title in groups:
+            try:
+                bot.get_chat(chat_id)
+                active_count += 1
+            except Exception:
+                delete_group(chat_id)
+                removed_count += 1
 
-    return active_count, removed_count
+        return active_count, removed_count
+    except Exception as e:
+        print(f"Error checking groups: {e}")
+        return 0, 0
 
 # ==========================================
 # AUTOMATED TRACKING
@@ -131,14 +156,18 @@ def handle_all_messages(message):
         if message.from_user.username:
             user_fullname += f" (@{message.from_user.username})"
         
-        conn = sqlite3.connect('bot_data.db')
-        cursor = conn.cursor()
-        cursor.execute('SELECT added_by_id FROM groups WHERE chat_id = ?', (message.chat.id,))
-        row = cursor.fetchone()
-        conn.close()
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT added_by_id FROM groups WHERE chat_id = %s', (message.chat.id,))
+            row = cursor.fetchone()
+            cursor.close()
+            conn.close()
 
-        if not row:
-            save_group(message.chat.id, message.chat.title, message.from_user.id, user_fullname)
+            if not row:
+                save_group(message.chat.id, message.chat.title, message.from_user.id, user_fullname)
+        except Exception:
+            pass
 
     text = message.text if message.text else ""
 
@@ -170,17 +199,20 @@ def handle_all_messages(message):
     elif text.startswith('/stats'):
         if not is_owner(message.from_user.id):
             return
-        conn = sqlite3.connect('bot_data.db')
-        cursor = conn.cursor()
-        cursor.execute('SELECT COUNT(*) FROM users')
-        u_count = cursor.fetchone()[0]
-        cursor.execute('SELECT COUNT(*) FROM groups')
-        g_count = cursor.fetchone()[0]
-        conn.close()
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT COUNT(*) FROM users')
+            u_count = cursor.fetchone()[0]
+            cursor.execute('SELECT COUNT(*) FROM groups')
+            g_count = cursor.fetchone()[0]
+            cursor.close()
+            conn.close()
 
-        bot.reply_to(message, f"📊 **Bot စာရင်းချုပ်**\n\n👤 အသုံးပြုသူ (Users): {u_count} ယောက်\n👥 ဂျီပီများ (Groups): {g_count} ခု", parse_mode="Markdown")
+            bot.reply_to(message, f"📊 **Bot စာရင်းချုပ်**\n\n👤 အသုံးပြုသူ (Users): {u_count} ယောက်\n👥 ဂျီပီများ (Groups): {g_count} ခု", parse_mode="Markdown")
+        except Exception as e:
+            bot.reply_to(message, f"❌ Error: {e}")
 
-    # ဂျီပီများကို ကိုယ်တိုင် Auto Clean / Check လုပ်သည့် Command
     elif text.startswith('/checkgroups'):
         if not is_owner(message.from_user.id):
             return
@@ -199,34 +231,38 @@ def handle_all_messages(message):
         if not is_owner(message.from_user.id):
             return
 
-        conn = sqlite3.connect('bot_data.db')
-        cursor = conn.cursor()
-        cursor.execute('SELECT chat_id, title, added_by_name FROM groups')
-        groups_data = cursor.fetchall()
-        conn.close()
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT chat_id, title, added_by_name FROM groups')
+            groups_data = cursor.fetchall()
+            cursor.close()
+            conn.close()
 
-        if not groups_data:
-            bot.reply_to(message, "ℹ️ Bot ထည့်ထားသော ဂျီပီ စာရင်း မရှိသေးပါ။")
-            return
+            if not groups_data:
+                bot.reply_to(message, "ℹ️ Bot ထည့်ထားသော ဂျီပီ စာရင်း မရှိသေးပါ။")
+                return
 
-        report = "👥 **Bot ရောက်ရှိနေသော ဂျီပီများ စာရင်း**\n\n"
-        for index, g in enumerate(groups_data, 1):
-            chat_id, title, added_by = g[0], g[1], g[2]
-            try:
-                members_count = bot.get_chat_member_count(chat_id)
-                member_str = f"{members_count} ယောက်"
-            except Exception:
-                member_str = "စစ်မရပါ (Bot ဖယ်ထုတ်ခံထားရနိုင်သည်)"
+            report = "👥 **Bot ရောက်ရှိနေသော ဂျီပီများ စာရင်း**\n\n"
+            for index, g in enumerate(groups_data, 1):
+                chat_id, title, added_by = g[0], g[1], g[2]
+                try:
+                    members_count = bot.get_chat_member_count(chat_id)
+                    member_str = f"{members_count} ယောက်"
+                except Exception:
+                    member_str = "စစ်မရပါ (Bot ဖယ်ထုတ်ခံထားရနိုင်သည်)"
 
-            report += f"{index}။ **{title}**\n"
-            report += f"   - 👤 ထည့်သွင်းသူ: {added_by or 'မသိရပါ'}\n"
-            report += f"   - 👨‍👩‍👧‍👦 ဂျီပီ လူဦးရေ: `{member_str}`\n\n"
+                report += f"{index}။ **{title}**\n"
+                report += f"   - 👤 ထည့်သွင်းသူ: {added_by or 'မသိရပါ'}\n"
+                report += f"   - 👨‍👩‍👧‍👦 ဂျီပီ လူဦးရေ: `{member_str}`\n\n"
 
-        if len(report) > 4000:
-            for x in range(0, len(report), 4000):
-                bot.send_message(message.chat.id, report[x:x+4000], parse_mode="Markdown")
-        else:
-            bot.reply_to(message, report, parse_mode="Markdown")
+            if len(report) > 4000:
+                for x in range(0, len(report), 4000):
+                    bot.send_message(message.chat.id, report[x:x+4000], parse_mode="Markdown")
+            else:
+                bot.reply_to(message, report, parse_mode="Markdown")
+        except Exception as e:
+            bot.reply_to(message, f"❌ Error: {e}")
 
     elif text.startswith('/broadcast'):
         if not is_owner(message.from_user.id):
@@ -239,50 +275,46 @@ def handle_all_messages(message):
 
         status_msg = bot.reply_to(message, "⏳ ကြော်ငြာများ စတင်ပေးပို့နေပါပြီ...")
 
-        conn = sqlite3.connect('bot_data.db')
-        cursor = conn.cursor()
-        cursor.execute('SELECT user_id FROM users')
-        users = cursor.fetchall()
-        cursor.execute('SELECT chat_id FROM groups')
-        groups = cursor.fetchall()
-        conn.close()
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT user_id FROM users')
+            users = cursor.fetchall()
+            cursor.execute('SELECT chat_id FROM groups')
+            groups = cursor.fetchall()
+            cursor.close()
+            conn.close()
 
-        all_targets = [u[0] for u in users] + [g[0] for g in groups]
-        success = 0
-        failed = 0
+            all_targets = [u[0] for u in users] + [g[0] for g in groups]
+            success = 0
+            failed = 0
 
-        for chat_id in all_targets:
-            try:
-                if message.photo:
-                    photo_id = message.photo[-1].file_id
-                    bot.send_photo(chat_id, photo_id, caption=broadcast_text)
-                elif message.video:
-                    video_id = message.video.file_id
-                    bot.send_video(chat_id, video_id, caption=broadcast_text)
-                else:
-                    bot.send_message(chat_id, broadcast_text)
-                
-                success += 1
-                time.sleep(0.05)
-            except Exception:
-                failed += 1
-                # ကြော်ငြာ ပို့မရတော့သော (Bot ကို Kick ထားသော) Group များကို မလိုလားအပ်ဘဲ သိမ်းမထားအောင် Auto ဖျက်ခြင်း
-                delete_group(chat_id)
+            for chat_id in all_targets:
+                try:
+                    if message.photo:
+                        photo_id = message.photo[-1].file_id
+                        bot.send_photo(chat_id, photo_id, caption=broadcast_text)
+                    elif message.video:
+                        video_id = message.video.file_id
+                        bot.send_video(chat_id, video_id, caption=broadcast_text)
+                    else:
+                        bot.send_message(chat_id, broadcast_text)
+                    
+                    success += 1
+                    time.sleep(0.05)
+                except Exception:
+                    failed += 1
+                    delete_group(chat_id)
 
-        report = (
-            "📢 **ကြော်ငြာ ပို့ဆောင်မှု အစီရင်ခံစာ (Broadcast Report)**\n\n"
-            f"🎯 စုစုပေါင်း ပို့လွှတ်သည့် နေရာ: {len(all_targets)}\n"
-            f"✅ အောင်မြင်စွာ ရောက်ရှိ: {success}\n"
-            f"❌ မရောက်ရှိ/Block ထားသည်: {failed}"
-        )
-        bot.edit_message_text(report, chat_id=message.chat.id, message_id=status_msg.message_id, parse_mode="Markdown")
-
-# Bot စတင် ပွင့်လာချိန်တွင် Group အားလုံးကို အလိုအလျောက် စစ်ဆေးခြင်း
-print("Group စာရင်းများကို အလိုအလျောက် စစ်ဆေးနေပါသည်...")
-try:
-    check_all_groups()
-except Exception:
-    pass
+            report = (
+                "📢 **ကြော်ငြာ ပို့ဆောင်မှု အစီရင်ခံစာ (Broadcast Report)**\n\n"
+                f"🎯 စုစုပေါင်း ပို့လွှတ်သည့် နေရာ: {len(all_targets)}\n"
+                f"✅ အောင်မြင်စွာ ရောက်ရှိ: {success}\n"
+                f"❌ မရောက်ရှိ/Block ထားသည်: {failed}"
+            )
+            bot.edit_message_text(report, chat_id=message.chat.id, message_id=status_msg.message_id, parse_mode="Markdown")
+        except Exception as e:
+            bot.reply_to(message, f"❌ Error: {e}")
 
 print("Bot စတင်ပွင့်နေပါပြီ...")
 bot.infinity_polling(skip_pending=True)
