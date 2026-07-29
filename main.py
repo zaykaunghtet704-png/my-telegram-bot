@@ -1,6 +1,7 @@
 import telebot
 import sqlite3
 import time
+import threading
 
 # ==========================================
 # CONFIGURATION
@@ -16,7 +17,6 @@ bot = telebot.TeleBot(BOT_TOKEN)
 def init_db():
     conn = sqlite3.connect('bot_data.db')
     cursor = conn.cursor()
-    # Users Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -24,7 +24,6 @@ def init_db():
             username TEXT
         )
     ''')
-    # Groups Table (ထည့်သွင်းသူနှင့် အချက်အလက်များ သိမ်းရန်)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS groups (
             chat_id INTEGER PRIMARY KEY,
@@ -54,34 +53,79 @@ def save_group(chat_id, title, added_by_id, added_by_name):
     conn.commit()
     conn.close()
 
+def delete_group(chat_id):
+    conn = sqlite3.connect('bot_data.db')
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM groups WHERE chat_id = ?', (chat_id,))
+    conn.commit()
+    conn.close()
+
 def is_owner(user_id):
     return user_id == OWNER_ID
 
 # ==========================================
-# AUTOMATED TRACKING (အလိုအလျောက် စာရင်းမှတ်ခြင်း)
+# 🔄 ANTI-SLEEP & AUTO-CHECK SYSTEM
 # ==========================================
 
-# ဂျီပီထဲသို့ Bot ကို ထည့်လိုက်ချိန်တွင် အလိုအလျောက် သိမ်းဆည်းခြင်း
+# 1. Server အိပ်မပျော်အောင် 5 မိနစ်တစ်ကြိမ် ပုံမှန် ပို့ပေးသည့် စနစ်
+def keep_alive():
+    while True:
+        time.sleep(300) # ၅ မိနစ်စောင့်သည်
+        try:
+            bot.get_me() # API ကို အလုပ်လုပ်ခိုင်းပြီး Server နိုးအောင်လုပ်သည်
+        except Exception:
+            pass
+
+# Keep-alive ကို Background Thread အဖြစ် စတင်ခြင်း
+threading.Thread(target=keep_alive, daemon=True).start()
+
+# 2. Database ထဲရှိ ဂျီပီများ အလုပ်လုပ်/မလုပ် အလိုအလျောက် စစ်ဆေးသည့် Function
+def check_all_groups():
+    conn = sqlite3.connect('bot_data.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT chat_id, title FROM groups')
+    groups = cursor.fetchall()
+    conn.close()
+
+    active_count = 0
+    removed_count = 0
+
+    for chat_id, title in groups:
+        try:
+            # Group ထဲမှာ Bot ရှိသေးလား စစ်ဆေးခြင်း
+            bot.get_chat(chat_id)
+            active_count += 1
+        except Exception:
+            # Bot မရှိတော့ပါက စာရင်းထဲမှ အလိုအလျောက် ဖျက်ပစ်ခြင်း
+            delete_group(chat_id)
+            removed_count += 1
+
+    return active_count, removed_count
+
+# ==========================================
+# AUTOMATED TRACKING
+# ==========================================
+
 @bot.my_chat_member_handler()
 def track_group_addition(my_chat_member):
     new_status = my_chat_member.new_chat_member.status
     chat = my_chat_member.chat
     user = my_chat_member.from_user
 
-    if chat.type in ['group', 'supergroup'] and new_status in ['member', 'administrator']:
-        user_fullname = f"{user.first_name or ''} {user.last_name or ''}".strip()
-        if user.username:
-            user_fullname += f" (@{user.username})"
-        save_group(chat.id, chat.title, user.id, user_fullname)
+    if chat.type in ['group', 'supergroup']:
+        if new_status in ['member', 'administrator']:
+            user_fullname = f"{user.first_name or ''} {user.last_name or ''}".strip()
+            if user.username:
+                user_fullname += f" (@{user.username})"
+            save_group(chat.id, chat.title, user.id, user_fullname)
+        elif new_status in ['left', 'kicked']:
+            delete_group(chat.id)
 
-# စာဝင်လာတိုင်း User နှင့် Group အချက်အလက်များကို Auto Update လုပ်ခြင်း
 @bot.message_handler(func=lambda message: True, content_types=['text', 'photo', 'video', 'document', 'new_chat_members'])
 def handle_all_messages(message):
-    # 1. Private User အချက်အလက်
     if message.chat.type == 'private':
         save_user(message.from_user)
 
-    # 2. Group အချက်အလက်
     elif message.chat.type in ['group', 'supergroup']:
         user_fullname = f"{message.from_user.first_name or ''} {message.from_user.last_name or ''}".strip()
         if message.from_user.username:
@@ -98,11 +142,7 @@ def handle_all_messages(message):
 
     text = message.text if message.text else ""
 
-    # ==========================================
-    # OWNER COMMANDS (Owner တစ်ဦးတည်းသာ သုံးနိုင်သည်)
-    # ==========================================
-
-    # 5. Owner ပဲ သုံးလို့ရအောင် ကန့်သတ်ထားခြင်း
+    # OWNER COMMANDS
     if text.startswith('/start'):
         if not is_owner(message.from_user.id):
             bot.reply_to(message, "⚠️ တောင်းပန်ပါတယ်။ ဒီ Bot ကို ပိုင်ရှင် (Owner) သာလျှင် အသုံးပြုခွင့်ရှိပါတယ်။")
@@ -116,18 +156,17 @@ def handle_all_messages(message):
             "🛠 **Owner Control Panel**\n\n"
             "🟢 `/status` - Bot အလုပ်လုပ်နေလား စစ်ဆေးရန်\n"
             "📊 `/stats` - သုံးစွဲသူနှင့် ဂျီပီ စုစုပေါင်း အရေအတွက်\n"
-            "👥 `/groups` - ဂျီပီ နာမည်များ၊ ထည့်သွင်းသူနှင့် အလိုအလျောက် စစ်ထားသော လူဦးရေ စာရင်း\n"
+            "👥 `/groups` - ဂျီပီများ၊ ထည့်သွင်းသူနှင့် လူဦးရေ စာရင်း\n"
+            "🔍 `/checkgroups` - ဂျီပီများ အလုပ်လုပ် မလုပ် ကိုယ်တိုင် စစ်ဆေးရန်\n"
             "📢 `/broadcast <စာ>` - ကြော်ငြာ စာ/ပုံ/ဗီဒီယို ပို့ရန်"
         )
         bot.reply_to(message, help_text, parse_mode="Markdown")
 
-    # 1. Bot အလုပ်လုပ်နေလား စစ်ဆေးခြင်း
     elif text.startswith('/status'):
         if not is_owner(message.from_user.id):
             return
-        bot.reply_to(message, "✅ **Bot status:** Online (ပုံမှန် အလုပ်လုပ်နေပါသည်)")
+        bot.reply_to(message, "✅ **Bot status:** Online (မအိပ်ဘဲ အလုပ်လုပ်နေပါသည်)")
 
-    # 2. သုံးစွဲသူနှင့် ဂျီပီ စုစုပေါင်း အရေအတွက် ကြည့်ခြင်း
     elif text.startswith('/stats'):
         if not is_owner(message.from_user.id):
             return
@@ -141,7 +180,21 @@ def handle_all_messages(message):
 
         bot.reply_to(message, f"📊 **Bot စာရင်းချုပ်**\n\n👤 အသုံးပြုသူ (Users): {u_count} ယောက်\n👥 ဂျီပီများ (Groups): {g_count} ခု", parse_mode="Markdown")
 
-    # 2. ဂျီပီ နာမည်များ၊ ထည့်သွင်းသူနှင့် လူဦးရေကို အလိုအလျောက် စစ်ဆေးပြသခြင်း
+    # ဂျီပီများကို ကိုယ်တိုင် Auto Clean / Check လုပ်သည့် Command
+    elif text.startswith('/checkgroups'):
+        if not is_owner(message.from_user.id):
+            return
+        
+        status = bot.reply_to(message, "🔍 ဂျီပီများအားလုံးကို စစ်ဆေးနေပါသည်...")
+        active, removed = check_all_groups()
+        
+        res = (
+            "✅ **ဂျီပီများ စစ်ဆေးပြီးစီးပါပြီ**\n\n"
+            f"💚 ပုံမှန် အလုပ်လုပ်နေသော ဂျီပီ: {active} ခု\n"
+            f"❌ Bot ဖယ်ထုတ်ခံထားရ၍ စာရင်းမှ ရှင်းထုတ်လိုက်သော ဂျီပီ: {removed} ခု"
+        )
+        bot.edit_message_text(res, chat_id=message.chat.id, message_id=status.message_id, parse_mode="Markdown")
+
     elif text.startswith('/groups'):
         if not is_owner(message.from_user.id):
             return
@@ -160,11 +213,10 @@ def handle_all_messages(message):
         for index, g in enumerate(groups_data, 1):
             chat_id, title, added_by = g[0], g[1], g[2]
             try:
-                # Telegram API မှတစ်ဆင့် ဂျီပီ လူဦးရေကို အလိုအလျောက် စစ်ပေးခြင်း
                 members_count = bot.get_chat_member_count(chat_id)
                 member_str = f"{members_count} ယောက်"
             except Exception:
-                member_str = "စစ်မရပါ (Bot ကို ဂျီပီမှ ဖယ်ထုတ်ထားနိုင်သည်)"
+                member_str = "စစ်မရပါ (Bot ဖယ်ထုတ်ခံထားရနိုင်သည်)"
 
             report += f"{index}။ **{title}**\n"
             report += f"   - 👤 ထည့်သွင်းသူ: {added_by or 'မသိရပါ'}\n"
@@ -176,7 +228,6 @@ def handle_all_messages(message):
         else:
             bot.reply_to(message, report, parse_mode="Markdown")
 
-    # 3 & 4. ကြော်ငြာ ပို့ရန်နှင့် ရောက်/မရောက် Report ရယူခြင်း
     elif text.startswith('/broadcast'):
         if not is_owner(message.from_user.id):
             return
@@ -202,24 +253,22 @@ def handle_all_messages(message):
 
         for chat_id in all_targets:
             try:
-                # ပုံ ပါဝင်ပါက
                 if message.photo:
                     photo_id = message.photo[-1].file_id
                     bot.send_photo(chat_id, photo_id, caption=broadcast_text)
-                # ဗီဒီယို ပါဝင်ပါက
                 elif message.video:
                     video_id = message.video.file_id
                     bot.send_video(chat_id, video_id, caption=broadcast_text)
-                # စာသီးသန့်
                 else:
                     bot.send_message(chat_id, broadcast_text)
                 
                 success += 1
-                time.sleep(0.05) # Rate Limit မမိအောင် တားဆီးခြင်း
+                time.sleep(0.05)
             except Exception:
                 failed += 1
+                # ကြော်ငြာ ပို့မရတော့သော (Bot ကို Kick ထားသော) Group များကို မလိုလားအပ်ဘဲ သိမ်းမထားအောင် Auto ဖျက်ခြင်း
+                delete_group(chat_id)
 
-        # 4. ရောက်/မရောက် အစီရင်ခံစာ ပြသခြင်း
         report = (
             "📢 **ကြော်ငြာ ပို့ဆောင်မှု အစီရင်ခံစာ (Broadcast Report)**\n\n"
             f"🎯 စုစုပေါင်း ပို့လွှတ်သည့် နေရာ: {len(all_targets)}\n"
@@ -227,6 +276,13 @@ def handle_all_messages(message):
             f"❌ မရောက်ရှိ/Block ထားသည်: {failed}"
         )
         bot.edit_message_text(report, chat_id=message.chat.id, message_id=status_msg.message_id, parse_mode="Markdown")
+
+# Bot စတင် ပွင့်လာချိန်တွင် Group အားလုံးကို အလိုအလျောက် စစ်ဆေးခြင်း
+print("Group စာရင်းများကို အလိုအလျောက် စစ်ဆေးနေပါသည်...")
+try:
+    check_all_groups()
+except Exception:
+    pass
 
 print("Bot စတင်ပွင့်နေပါပြီ...")
 bot.infinity_polling(skip_pending=True)
