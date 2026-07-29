@@ -13,7 +13,7 @@ DATABASE_URL = "postgresql://postgres.fdfcifwziqrqqjimtqgm:zaykaunghtet704%23%40
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ==========================================
-# SUPABASE DATABASE SETUP
+# SUPABASE DATABASE SETUP & HELPERS
 # ==========================================
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL)
@@ -57,6 +57,18 @@ def save_user(user):
         conn.close()
     except Exception as e:
         print(f"Error saving user: {e}")
+
+def delete_user(user_id):
+    """ Block ထားသော သို့မဟုတ် မရှိတော့သော User များကို စာရင်းမှ ဖျက်ရန် """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM users WHERE user_id = %s', (user_id,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"Error deleting user: {e}")
 
 def save_group(chat_id, title, added_by_id, added_by_name):
     try:
@@ -128,7 +140,7 @@ def check_all_groups():
         return 0, 0
 
 # ==========================================
-# AUTOMATED TRACKING
+# AUTOMATED TRACKING & HANDLERS
 # ==========================================
 
 @bot.my_chat_member_handler()
@@ -243,7 +255,7 @@ def handle_all_messages(message):
                 bot.reply_to(message, "ℹ️ Bot ထည့်ထားသော ဂျီပီ စာရင်း မရှိသေးပါ။")
                 return
 
-            report = "👥 **Bot ရောက်ရှိနေသော ဂျီပီများ စာရင်း**\n\n"
+            report = "👥 Bot ရောက်ရှိနေသော ဂျီပီများ စာရင်း\n\n"
             for index, g in enumerate(groups_data, 1):
                 chat_id, title, added_by = g[0], g[1], g[2]
                 try:
@@ -252,15 +264,16 @@ def handle_all_messages(message):
                 except Exception:
                     member_str = "စစ်မရပါ (Bot ဖယ်ထုတ်ခံထားရနိုင်သည်)"
 
-                report += f"{index}။ **{title}**\n"
+                report += f"{index}။ {title}\n"
                 report += f"   - 👤 ထည့်သွင်းသူ: {added_by or 'မသိရပါ'}\n"
-                report += f"   - 👨‍👩‍👧‍👦 ဂျီပီ လူဦးရေ: `{member_str}`\n\n"
+                report += f"   - 👨‍👩‍👧‍👦 ဂျီပီ လူဦးရေ: {member_str}\n\n"
 
+            # Markdown Error မတက်အောင် parse_mode ဖြုတ်ထားပါသည်
             if len(report) > 4000:
                 for x in range(0, len(report), 4000):
-                    bot.send_message(message.chat.id, report[x:x+4000], parse_mode="Markdown")
+                    bot.send_message(message.chat.id, report[x:x+4000])
             else:
-                bot.reply_to(message, report, parse_mode="Markdown")
+                bot.reply_to(message, report)
         except Exception as e:
             bot.reply_to(message, f"❌ Error: {e}")
 
@@ -270,7 +283,7 @@ def handle_all_messages(message):
 
         broadcast_text = text.replace('/broadcast', '').strip()
         if not broadcast_text and not message.photo and not message.video and not message.document:
-            bot.reply_to(message, "⚠️ ကျေးဇူးပြု၍ ပို့ချင်သော ကြော်ငြာ စာသား သို့မဟုတ် ပုံ/ဗီဒီယို ထည့်သွင်းပါ။\nဥပမာ - `/broadcast မင်္ဂလာပါ`")
+            bot.reply_to(message, "⚠️ ကျေးဇူးပြု၍ ပို့ချင်သော ကြော်ငြာ စာသား သို့မဟုတ် ပုံ/ဗီဒီယို ထည့်သွင်းပါ။\nဥပမာ - `/broadcast မင်္ဂလာပါ`", parse_mode="Markdown")
             return
 
         status_msg = bot.reply_to(message, "⏳ ကြော်ငြာများ စတင်ပေးပို့နေပါပြီ...")
@@ -279,38 +292,61 @@ def handle_all_messages(message):
             conn = get_db_connection()
             cursor = conn.cursor()
             cursor.execute('SELECT user_id FROM users')
-            users = cursor.fetchall()
+            users = [u[0] for u in cursor.fetchall()]
+            
             cursor.execute('SELECT chat_id FROM groups')
-            groups = cursor.fetchall()
+            groups = [g[0] for g in cursor.fetchall()]
             cursor.close()
             conn.close()
 
-            all_targets = [u[0] for u in users] + [g[0] for g in groups]
             success = 0
-            failed = 0
+            failed_users = 0
+            failed_groups = 0
 
-            for chat_id in all_targets:
+            # 1. BROADCAST TO USERS (လူများထံ ပို့ခြင်း)
+            for user_id in users:
                 try:
                     if message.photo:
                         photo_id = message.photo[-1].file_id
-                        bot.send_photo(chat_id, photo_id, caption=broadcast_text)
+                        bot.send_photo(user_id, photo_id, caption=broadcast_text)
                     elif message.video:
                         video_id = message.video.file_id
-                        bot.send_video(chat_id, video_id, caption=broadcast_text)
+                        bot.send_video(user_id, video_id, caption=broadcast_text)
                     else:
-                        bot.send_message(chat_id, broadcast_text)
+                        bot.send_message(user_id, broadcast_text)
                     
                     success += 1
                     time.sleep(0.05)
                 except Exception:
-                    failed += 1
-                    delete_group(chat_id)
+                    failed_users += 1
+                    delete_user(user_id)
+
+            # 2. BROADCAST TO GROUPS (ဂျီပီများထံ ပို့ခြင်း)
+            for group_id in groups:
+                try:
+                    if message.photo:
+                        photo_id = message.photo[-1].file_id
+                        bot.send_photo(group_id, photo_id, caption=broadcast_text)
+                    elif message.video:
+                        video_id = message.video.file_id
+                        bot.send_video(group_id, video_id, caption=broadcast_text)
+                    else:
+                        bot.send_message(group_id, broadcast_text)
+                    
+                    success += 1
+                    time.sleep(0.05)
+                except Exception:
+                    failed_groups += 1
+                    delete_group(group_id)
+
+            total_targets = len(users) + len(groups)
 
             report = (
                 "📢 **ကြော်ငြာ ပို့ဆောင်မှု အစီရင်ခံစာ (Broadcast Report)**\n\n"
-                f"🎯 စုစုပေါင်း ပို့လွှတ်သည့် နေရာ: {len(all_targets)}\n"
+                f"🎯 စုစုပေါင်း ပို့လွှတ်သည့် နေရာ: {total_targets}\n"
                 f"✅ အောင်မြင်စွာ ရောက်ရှိ: {success}\n"
-                f"❌ မရောက်ရှိ/Block ထားသည်: {failed}"
+                f"❌ ပို့၍ မရသော User အရေအတွက်: {failed_users}\n"
+                f"❌ ပို့၍ မရသော Group အရေအတွက်: {failed_groups}"
             )
             bot.edit_message_text(report, chat_id=message.chat.id, message_id=status_msg.message_id, parse_mode="Markdown")
         except Exception as e:
