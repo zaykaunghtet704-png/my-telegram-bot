@@ -1,4 +1,5 @@
 import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import psycopg2
 import time
 import threading
@@ -8,6 +9,8 @@ import threading
 # ==========================================
 BOT_TOKEN = "8886077155:AAET1U9CXGZtaiIBLYxAutzFKFe-BkQpVno"
 OWNER_ID = 7974865879
+FORCE_JOIN_GROUP_ID = -1004489775235
+FORCE_JOIN_LINK = "https://t.me/+00J7JktW8bJlZTY1"
 DATABASE_URL = "postgresql://postgres.fdfcifwziqrqqjimtqgm:zaykaunghtet704%23%40@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres"
 
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -59,7 +62,6 @@ def save_user(user):
         print(f"Error saving user: {e}")
 
 def delete_user(user_id):
-    """ Block ထားသော သို့မဟုတ် မရှိတော့သော User များကို စာရင်းမှ ဖျက်ရန် """
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -99,6 +101,25 @@ def delete_group(chat_id):
 
 def is_owner(user_id):
     return user_id == OWNER_ID
+
+def is_user_joined(user_id):
+    """ User သည် သတ်မှတ်ထားသော Group ထဲတွင် ရှိ/မရှိ စစ်ဆေးခြင်း """
+    try:
+        member = bot.get_chat_member(FORCE_JOIN_GROUP_ID, user_id)
+        if member.status in ['creator', 'administrator', 'member']:
+            return True
+        return False
+    except Exception:
+        # Bot က Group ထဲမှာ Admin မဟုတ်ပါက သို့မဟုတ် ID မှားနေပါက အလိုအလျောက် True ပေးမည်
+        return True
+
+def get_force_join_markup():
+    markup = InlineKeyboardMarkup()
+    btn_join = InlineKeyboardButton("📢 Join Group", url=FORCE_JOIN_LINK)
+    btn_check = InlineKeyboardButton("✅ Check Joined", callback_data="check_joined")
+    markup.add(btn_join)
+    markup.add(btn_check)
+    return markup
 
 # ==========================================
 # 🔄 ANTI-SLEEP & AUTO-CHECK SYSTEM
@@ -158,6 +179,19 @@ def track_group_addition(my_chat_member):
         elif new_status in ['left', 'kicked']:
             delete_group(chat.id)
 
+@bot.callback_query_handler(func=lambda call: call.data == "check_joined")
+def callback_check_joined(call):
+    user_id = call.from_user.id
+    if is_user_joined(user_id):
+        bot.answer_callback_query(call.id, "✅ ကျေးဇူးတင်ပါတယ်! Group ထဲသို့ ဝင်ရောက်ပြီးပါပြီ။", show_alert=True)
+        bot.edit_message_text(
+            "👋 မင်္ဂလာပါ! Group ထဲသို့ အောင်မြင်စွာ ဝင်ရောက်ပြီးပါပြီ။",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id
+        )
+    else:
+        bot.answer_callback_query(call.id, "❌ Group ထဲသို့ မဝင်ရသေးပါ။ အရင် ဝင်ရောက်ပေးပါ။", show_alert=True)
+
 @bot.message_handler(func=lambda message: True, content_types=['text', 'photo', 'video', 'document', 'new_chat_members'])
 def handle_all_messages(message):
     if message.chat.type == 'private':
@@ -183,12 +217,23 @@ def handle_all_messages(message):
 
     text = message.text if message.text else ""
 
-    # OWNER COMMANDS
+    # COMMANDS
     if text.startswith('/start'):
-        if not is_owner(message.from_user.id):
-            bot.reply_to(message, "⚠️ တောင်းပန်ပါတယ်။ ဒီ Bot ကို ပိုင်ရှင် (Owner) သာလျှင် အသုံးပြုခွင့်ရှိပါတယ်။")
+        # 1. OWNER ဖြစ်ပါက
+        if is_owner(message.from_user.id):
+            bot.reply_to(message, "👋 မင်္ဂလာပါ Owner! ကြော်ငြာများ ပို့ရန်နှင့် စာရင်းများကြည့်ရန် /help ကို နှိပ်ပါ။")
             return
-        bot.reply_to(message, "👋 မင်္ဂလာပါ Owner! ကြော်ငြာများ ပို့ရန်နှင့် စာရင်းများကြည့်ရန် /help ကို နှိပ်ပါ။")
+        
+        # 2. အခြား USER များဖြစ်ပါက FORCE JOIN စစ်ဆေးခြင်း
+        if not is_user_joined(message.from_user.id):
+            bot.reply_to(
+                message, 
+                "⚠️ **သတိပေးချက်**\n\nBot ကို အသုံးပြုနိုင်ရန်အတွက် အောက်ပါ Group သို့ အရင် Join ပေးပါရန် မေတ္တာရပ်ခံအပ်ပါသည်။", 
+                reply_markup=get_force_join_markup(),
+                parse_mode="Markdown"
+            )
+        else:
+            bot.reply_to(message, "👋 မင်္ဂလာပါ! Group ထဲသို့ ဝင်ရောက်ထားပြီးသည့်အတွက် ကျေးဇူးတင်ပါသည်။")
 
     elif text.startswith('/help'):
         if not is_owner(message.from_user.id):
@@ -268,7 +313,6 @@ def handle_all_messages(message):
                 report += f"   - 👤 ထည့်သွင်းသူ: {added_by or 'မသိရပါ'}\n"
                 report += f"   - 👨‍👩‍👧‍👦 ဂျီပီ လူဦးရေ: {member_str}\n\n"
 
-            # Markdown Error မတက်အောင် parse_mode ဖြုတ်ထားပါသည်
             if len(report) > 4000:
                 for x in range(0, len(report), 4000):
                     bot.send_message(message.chat.id, report[x:x+4000])
@@ -303,7 +347,7 @@ def handle_all_messages(message):
             failed_users = 0
             failed_groups = 0
 
-            # 1. BROADCAST TO USERS (လူများထံ ပို့ခြင်း)
+            # 1. BROADCAST TO USERS
             for user_id in users:
                 try:
                     if message.photo:
@@ -321,7 +365,7 @@ def handle_all_messages(message):
                     failed_users += 1
                     delete_user(user_id)
 
-            # 2. BROADCAST TO GROUPS (ဂျီပီများထံ ပို့ခြင်း)
+            # 2. BROADCAST TO GROUPS
             for group_id in groups:
                 try:
                     if message.photo:
