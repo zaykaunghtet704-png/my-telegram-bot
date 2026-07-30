@@ -141,17 +141,25 @@ def get_force_join_markup():
 # ==========================================
 # 🖼 AI CARD CHARACTER IDENTIFIER (GEMINI)
 # ==========================================
-def identify_card_character(message):
+def process_photo_and_reply(message):
     try:
-        file_id = message.photo[-1].file_id
+        msg_to_use = message
+        # Forward လုပ်ထားသည့် မက်ဆေ့ခ်ျ ဖြစ်ပါက
+        if message.reply_to_message and message.reply_to_message.photo:
+            msg_to_use = message.reply_to_message
+
+        if not msg_to_use.photo:
+            return
+
+        file_id = msg_to_use.photo[-1].file_id
         file_info = bot.get_file(file_id)
         downloaded_file = bot.download_file(file_info.file_path)
         
         image = Image.open(io.BytesIO(downloaded_file))
         
         prompt = (
-            "Identify the anime, game, or movie character in this card image. "
-            "Reply strictly with only the character name. Do not add extra words or punctation."
+            "Identify the character in this image. "
+            "Reply ONLY with the character name. Do not write any other explanation or punctuation."
         )
         
         response = ai_model.generate_content([prompt, image])
@@ -162,22 +170,28 @@ def identify_card_character(message):
             full_cmd = f"/guess {char_name}"
             catch_cmd = f"/catch {char_name}"
             
-            return (
-                f"🎯 **Character Identified:**\n\n"
-                f"👤 **Name:** `{char_name}`\n"
+            reply_text = (
+                f"🎯 Character Identified:\n\n"
+                f"👤 Name: {char_name}\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"🔹 **Guess Hint:** `{hint_cmd}`\n"
-                f"🔸 **Guess Full:** `{full_cmd}`\n"
-                f"⚔️ **Catch:** `{catch_cmd}`"
+                f"🔹 Guess Hint: {hint_cmd}\n"
+                f"🔸 Guess Full: {full_cmd}\n"
+                f"⚔️ Catch: {catch_cmd}"
             )
+            bot.reply_to(message, reply_text)
     except Exception as e:
-        print(f"AI Identification Error: {e}")
-    return None
+        print(f"AI Error: {e}")
+
+# ==========================================
+# PHOTO HANDLER (သီးသန့် ဖမ်းပေးခြင်း)
+# ==========================================
+@bot.message_handler(content_types=['photo'])
+def handle_photo(message):
+    process_photo_and_reply(message)
 
 # ==========================================
 # ADMIN COMMAND HANDLERS
 # ==========================================
-
 @bot.message_handler(commands=['status'])
 def cmd_status(message):
     if is_owner(message.from_user.id):
@@ -197,7 +211,7 @@ def cmd_stats(message):
         cursor.close()
         conn.close()
 
-        bot.reply_to(message, f"📊 **Bot Statistics**\n\n👤 Users: `{user_count}`\n👥 Groups: `{group_count}`")
+        bot.reply_to(message, f"📊 Bot Statistics\n\n👤 Users: {user_count}\n👥 Groups: {group_count}")
     except Exception as e:
         bot.reply_to(message, f"❌ Database Error: {e}")
 
@@ -221,7 +235,7 @@ def cmd_groups(message):
         for i, row in enumerate(rows, 1):
             text += f"{i}. {row[0]} (Added by: {row[1]})\n"
         
-        # Markdown Parse Error မတက်အောင် Plain Text အဖြစ် ပို့ပေးခြင်း
+        # Plain Text ဖြင့် ပို့ပေးထား၍ Markdown Error 100% ပျောက်ပါမည်
         bot.reply_to(message, text)
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}")
@@ -233,7 +247,7 @@ def cmd_broadcast(message):
     
     command_text = message.text.replace('/broadcast', '').strip()
     if not command_text and not message.reply_to_message:
-        bot.reply_to(message, "⚠️ ကျေးဇူးပြု၍ စာရိုက်ပါ သို့မဟုတ် Forward/Message ကို Reply လုပ်ပြီး `/broadcast <စာ>` ပို့ပါ။")
+        bot.reply_to(message, "⚠️ ကျေးဇူးပြု၍ စာရိုက်ပါ သို့မဟုတ် Message ကို Reply လုပ်ပြီး /broadcast <စာ> ပို့ပါ။")
         return
 
     conn = get_db_connection()
@@ -262,7 +276,6 @@ def cmd_broadcast(message):
 # ==========================================
 # AUTOMATED HANDLERS
 # ==========================================
-
 @bot.callback_query_handler(func=lambda call: call.data == "check_joined")
 def callback_check_joined(call):
     user_id = call.from_user.id
@@ -276,15 +289,9 @@ def callback_check_joined(call):
     else:
         bot.answer_callback_query(call.id, "❌ Group ထဲသို့ မဝင်ရသေးပါ။ အရင် ဝင်ရောက်ပေးပါ။", show_alert=True)
 
-@bot.message_handler(func=lambda message: True, content_types=['text', 'photo', 'video', 'document'])
+@bot.message_handler(func=lambda message: True, content_types=['text', 'video', 'document'])
 def handle_all_messages(message):
-    text_to_check = message.caption or message.text or ""
-
-    # ၁။ ပုံပါလာလျှင် AI ဖြင့် နာမည်ရှာပေးခြင်း
-    if message.photo:
-        ai_result = identify_card_character(message)
-        if ai_result:
-            bot.reply_to(message, ai_result, parse_mode="Markdown")
+    text_to_check = message.text or ""
 
     # PRIVATE CHAT LOGIC (FORWARD TO ADMINS)
     if message.chat.type == 'private':
@@ -310,9 +317,8 @@ def handle_all_messages(message):
         if not is_user_joined(message.from_user.id):
             bot.reply_to(
                 message, 
-                "⚠️ **သတိပေးချက်**\n\nBot ကို အသုံးပြုနိုင်ရန်အတွက် အောက်ပါ Group သို့ အရင် Join ပေးပါရန်။", 
-                reply_markup=get_force_join_markup(),
-                parse_mode="Markdown"
+                "⚠️ သတိပေးချက်\n\nBot ကို အသုံးပြုနိုင်ရန်အတွက် အောက်ပါ Group သို့ အရင် Join ပေးပါရန်။", 
+                reply_markup=get_force_join_markup()
             )
         else:
             bot.reply_to(message, "👋 မင်္ဂလာပါ! ကဒ်ပုံများကို ပို့ပေးပါက AI မှ Character နာမည်နှင့် Command များကို ထုတ်ပေးပါမည်။")
