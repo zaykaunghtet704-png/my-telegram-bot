@@ -3,8 +3,10 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import psycopg2
 import time
 import threading
-import re
 import os
+import io
+import google.generativeai as genai
+from PIL import Image
 from flask import Flask
 
 # ==========================================
@@ -15,9 +17,19 @@ BOT_TOKEN = "8886077155:AAET1U9CXGZtaiIBLYxAutzFKFe-BkQpVno"
 # Owner နှင့် Admin ID များ
 ADMIN_IDS = [7974865879, 7177628115]
 
+# Gemini API Key
+GEMINI_API_KEY = "AQ.Ab8RN6KyZPxAwdKvzTfUeDI4uAPi8uPS71SWbYWU55NeExC_Bg"
+
 FORCE_JOIN_GROUP_ID = -1004489775235
 FORCE_JOIN_LINK = "https://t.me/+00J7JktW8bJlZTY1"
 DATABASE_URL = "postgresql://postgres.fdfcifwziqrqqjimtqgm:zaykaunghtet704%23%40@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres"
+
+# Setup Gemini AI
+try:
+    genai.configure(api_key=GEMINI_API_KEY)
+    ai_model = genai.GenerativeModel('gemini-1.5-flash')
+except Exception as e:
+    print(f"Gemini Setup Error: {e}")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -127,47 +139,39 @@ def get_force_join_markup():
     return markup
 
 # ==========================================
-# 🔍 IMPROVED TEXT BASED CARD FINDER
+# 🖼 AI CARD CHARACTER IDENTIFIER (GEMINI)
 # ==========================================
-def extract_card_info(text):
-    if not text:
-        return None
-    
-    char_name = None
-
-    # ၁။ "NAME : Character Name" သို့မဟုတ် "Name: Name" ပုံစံ စစ်ခြင်း
-    name_match = re.search(r'(?:NAME|Name|Character)\s*:\s*([^\n]+)', text, re.IGNORECASE)
-    if name_match:
-        char_name = name_match.group(1).strip()
-
-    # ၂။ "/catch [NAME]" သို့မဟုတ် "/guess [NAME]" ပုံစံ စစ်ခြင်း
-    if not char_name:
-        cmd_match = re.search(r'/(?:catch|guess)\s+([a-zA-Z0-9_\s]+)', text, re.IGNORECASE)
-        if cmd_match:
-            char_name = cmd_match.group(1).strip()
-
-    # ၃။ "A cute character appeared" (Guess its name) ပုံစံ
-    if not char_name and "appeared" in text.lower():
-        # Hint စာသားများ ပါမပါ စစ်ဆေးခြင်း
-        hint_match = re.search(r'hint\s*:\s*([^\n]+)', text, re.IGNORECASE)
-        if hint_match:
-            char_name = hint_match.group(1).strip()
-
-    if char_name:
-        # စာလုံးကြီး စာလုံးသေး အလွယ် ရိုက်နိုင်အောင် ပြင်ဆင်ခြင်း
-        clean_name = char_name.strip("[]")
-        hint_cmd = f"/guess {clean_name.lower()}"
-        full_cmd = f"/guess {clean_name}"
+def identify_card_character(message):
+    try:
+        file_id = message.photo[-1].file_id
+        file_info = bot.get_file(file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
         
-        reply_msg = (
-            f"🎯 **Character Catcher Result**\n\n"
-            f"**NAME : {clean_name}**\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"🔹 **Hint :** `{hint_cmd}`\n"
-            f"🔸 **Full :** `{full_cmd}`"
+        image = Image.open(io.BytesIO(downloaded_file))
+        
+        prompt = (
+            "Identify the anime, game, or movie character in this card image. "
+            "Reply strictly with only the character name. Do not add extra words or punctation."
         )
-        return reply_msg
-
+        
+        response = ai_model.generate_content([prompt, image])
+        char_name = response.text.strip()
+        
+        if char_name:
+            hint_cmd = f"/guess {char_name.lower()}"
+            full_cmd = f"/guess {char_name}"
+            catch_cmd = f"/catch {char_name}"
+            
+            return (
+                f"🎯 **Character Identified:**\n\n"
+                f"👤 **Name:** `{char_name}`\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"🔹 **Guess Hint:** `{hint_cmd}`\n"
+                f"🔸 **Guess Full:** `{full_cmd}`\n"
+                f"⚔️ **Catch:** `{catch_cmd}`"
+            )
+    except Exception as e:
+        print(f"AI Identification Error: {e}")
     return None
 
 # ==========================================
@@ -193,7 +197,7 @@ def cmd_stats(message):
         cursor.close()
         conn.close()
 
-        bot.reply_to(message, f"📊 **Bot Statistics**\n\n👤 Users: `{user_count}`\n👥 Groups: `{group_count}`", parse_mode="Markdown")
+        bot.reply_to(message, f"📊 **Bot Statistics**\n\n👤 Users: `{user_count}`\n👥 Groups: `{group_count}`")
     except Exception as e:
         bot.reply_to(message, f"❌ Database Error: {e}")
 
@@ -213,10 +217,12 @@ def cmd_groups(message):
             bot.reply_to(message, "👥 မည်သည့် Group မှ မရှိသေးပါ။")
             return
 
-        text = "👥 **Group List:**\n\n"
+        text = "👥 Group List:\n\n"
         for i, row in enumerate(rows, 1):
-            text += f"{i}. **{row[0]}** (Added by: {row[1]})\n"
-        bot.reply_to(message, text, parse_mode="Markdown")
+            text += f"{i}. {row[0]} (Added by: {row[1]})\n"
+        
+        # Markdown Parse Error မတက်အောင် Plain Text အဖြစ် ပို့ပေးခြင်း
+        bot.reply_to(message, text)
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}")
 
@@ -243,7 +249,7 @@ def cmd_broadcast(message):
     for user in users:
         try:
             if message.reply_to_message:
-                bot.copy_message(user[0], message.chat.id, message.message_id)
+                bot.copy_message(user[0], message.chat.id, message.reply_to_message.message_id)
             else:
                 bot.send_message(user[0], command_text)
             success += 1
@@ -251,7 +257,7 @@ def cmd_broadcast(message):
         except Exception:
             failed += 1
 
-    bot.send_message(message.chat.id, f"✅ **Broadcast အောင်မြင်ပါသည်!**\n\nအောင်မြင်: `{success}`\nကျရှုံး: `{failed}`", parse_mode="Markdown")
+    bot.send_message(message.chat.id, f"✅ Broadcast အောင်မြင်ပါသည်!\n\nအောင်မြင်: {success}\nကျရှုံး: {failed}")
 
 # ==========================================
 # AUTOMATED HANDLERS
@@ -274,10 +280,11 @@ def callback_check_joined(call):
 def handle_all_messages(message):
     text_to_check = message.caption or message.text or ""
 
-    # 1. Card နာမည် စာသားပါမပါ တိုက်ရိုက် စစ်ပေးခြင်း
-    card_info = extract_card_info(text_to_check)
-    if card_info:
-        bot.reply_to(message, card_info, parse_mode="Markdown")
+    # ၁။ ပုံပါလာလျှင် AI ဖြင့် နာမည်ရှာပေးခြင်း
+    if message.photo:
+        ai_result = identify_card_character(message)
+        if ai_result:
+            bot.reply_to(message, ai_result, parse_mode="Markdown")
 
     # PRIVATE CHAT LOGIC (FORWARD TO ADMINS)
     if message.chat.type == 'private':
@@ -285,11 +292,11 @@ def handle_all_messages(message):
 
         if not is_owner(message.from_user.id):
             user = message.from_user
-            user_info = f"📩 **New Message Received!**\n\n👤 **From:** {user.first_name or ''}\n🆔 **User ID:** `{user.id}`\n🔗 **Username:** @{user.username or 'မရှိပါ'}"
+            user_info = f"📩 New Message Received!\n\n👤 From: {user.first_name or ''}\n🆔 User ID: {user.id}\n🔗 Username: @{user.username or 'မရှိပါ'}"
             
             for admin_id in ADMIN_IDS:
                 try:
-                    bot.send_message(admin_id, user_info, parse_mode="Markdown")
+                    bot.send_message(admin_id, user_info)
                     bot.forward_message(admin_id, message.chat.id, message.message_id)
                 except Exception:
                     pass
@@ -308,19 +315,19 @@ def handle_all_messages(message):
                 parse_mode="Markdown"
             )
         else:
-            bot.reply_to(message, "👋 မင်္ဂလာပါ! Waifu/Card Message များကို Forward လုပ်ပေးပါက Name နှင့် /guess Command ကို ထုတ်ပေးပါမည်။")
+            bot.reply_to(message, "👋 မင်္ဂလာပါ! ကဒ်ပုံများကို ပို့ပေးပါက AI မှ Character နာမည်နှင့် Command များကို ထုတ်ပေးပါမည်။")
 
     elif text_to_check.startswith('/help'):
         if not is_owner(message.from_user.id):
             return
         help_text = (
-            "🛠 **Admin Control Panel**\n\n"
-            "🟢 `/status` - Bot အလုပ်လုပ်နေလား စစ်ဆေးရန်\n"
-            "📊 `/stats` - သုံးစွဲသူနှင့် ဂျီပီ စုစုပေါင်း အရေအတွက်\n"
-            "👥 `/groups` - ဂျီပီများ၊ ထည့်သွင်းသူ စာရင်း\n"
-            "📢 `/broadcast <စာ>` - ကြော်ငြာ ပို့ရန်"
+            "🛠 Admin Control Panel\n\n"
+            "🟢 /status - Bot အလုပ်လုပ်နေလား စစ်ဆေးရန်\n"
+            "📊 /stats - သုံးစွဲသူနှင့် ဂျီပီ စုစုပေါင်း အရေအတွက်\n"
+            "👥 /groups - ဂျီပီများ၊ ထည့်သွင်းသူ စာရင်း\n"
+            "📢 /broadcast <စာ> - ကြော်ငြာ ပို့ရန်"
         )
-        bot.reply_to(message, help_text, parse_mode="Markdown")
+        bot.reply_to(message, help_text)
 
 print("Bot စတင်ပွင့်နေပါပြီ...")
 bot.infinity_polling(skip_pending=True)
