@@ -8,7 +8,10 @@ import threading
 # CONFIGURATION
 # ==========================================
 BOT_TOKEN = "8886077155:AAET1U9CXGZtaiIBLYxAutzFKFe-BkQpVno"
-OWNER_ID = 7974865879
+
+# Owner နှင့် Co-Owner (Admin ID များ စာရင်း)
+ADMIN_IDS = [7974865879, 7177628115]
+
 FORCE_JOIN_GROUP_ID = -1004489775235
 FORCE_JOIN_LINK = "https://t.me/+00J7JktW8bJlZTY1"
 DATABASE_URL = "postgresql://postgres.fdfcifwziqrqqjimtqgm:zaykaunghtet704%23%40@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres"
@@ -100,7 +103,8 @@ def delete_group(chat_id):
         print(f"Error deleting group: {e}")
 
 def is_owner(user_id):
-    return user_id == OWNER_ID
+    """ ADMIN_IDS စာရင်းထဲတွင် ပါဝင်ပါက Admin ဟု သတ်မှတ်မည် """
+    return user_id in ADMIN_IDS
 
 def is_user_joined(user_id):
     try:
@@ -198,18 +202,17 @@ def handle_all_messages(message):
     if message.chat.type == 'private':
         save_user(message.from_user)
 
-        # OWNER မဟုတ်သော သူများ၏ စာများကို OWNER ထံ တိုက်ရိုက် စာပြန်ဆင့် (Forward) ပေးခြင်း
+        # ADMIN/OWNER မဟုတ်သော သူများ၏ စာများကို ADMIN များထံ Forward ပို့ပေးခြင်း
         if not is_owner(message.from_user.id):
             user = message.from_user
             user_info = f"📩 **New Message Received!**\n\n👤 **From:** {user.first_name or ''} {user.last_name or ''}\n🆔 **User ID:** `{user.id}`\n🔗 **Username:** @{user.username or 'မရှိပါ'}\n\n💬 **Message:**"
             
-            try:
-                # 1. ပို့သူ၏ အချက်အလက်ကို ပို့ခြင်း
-                bot.send_message(OWNER_ID, user_info, parse_mode="Markdown")
-                # 2. ပို့လိုက်သော စာ/ပုံ/ဗီဒီယို ကို မူရင်းအတိုင်း Forward ပို့ပေးခြင်း
-                bot.forward_message(OWNER_ID, message.chat.id, message.message_id)
-            except Exception as e:
-                print(f"Error forwarding to owner: {e}")
+            for admin_id in ADMIN_IDS:
+                try:
+                    bot.send_message(admin_id, user_info, parse_mode="Markdown")
+                    bot.forward_message(admin_id, message.chat.id, message.message_id)
+                except Exception as e:
+                    print(f"Error forwarding to admin {admin_id}: {e}")
 
     elif message.chat.type in ['group', 'supergroup']:
         user_fullname = f"{message.from_user.first_name or ''} {message.from_user.last_name or ''}".strip()
@@ -232,7 +235,7 @@ def handle_all_messages(message):
     # COMMANDS
     if text.startswith('/start'):
         if is_owner(message.from_user.id):
-            bot.reply_to(message, "👋 မင်္ဂလာပါ Owner! ကြော်ငြာများ ပို့ရန်နှင့် စာရင်းများကြည့်ရန် /help ကို နှိပ်ပါ။")
+            bot.reply_to(message, "👋 မင်္ဂလာပါ Admin! ကြော်ငြာများ ပို့ရန်နှင့် စာရင်းများကြည့်ရန် /help ကို နှိပ်ပါ။")
             return
         
         if not is_user_joined(message.from_user.id):
@@ -249,7 +252,7 @@ def handle_all_messages(message):
         if not is_owner(message.from_user.id):
             return
         help_text = (
-            "🛠 **Owner Control Panel**\n\n"
+            "🛠 **Admin Control Panel**\n\n"
             "🟢 `/status` - Bot အလုပ်လုပ်နေလား စစ်ဆေးရန်\n"
             "📊 `/stats` - သုံးစွဲသူနှင့် ဂျီပီ စုစုပေါင်း အရေအတွက်\n"
             "👥 `/groups` - ဂျီပီများ၊ ထည့်သွင်းသူနှင့် လူဦးရေ စာရင်း\n"
