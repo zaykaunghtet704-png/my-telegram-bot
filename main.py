@@ -3,82 +3,49 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import psycopg2
 import time
 import threading
-import os
-import io
-import google.generativeai as genai
-from PIL import Image
-from flask import Flask
+import re
 
 # ==========================================
 # CONFIGURATION
 # ==========================================
 BOT_TOKEN = "8886077155:AAET1U9CXGZtaiIBLYxAutzFKFe-BkQpVno"
+
+# Owner နှင့် Co-Owner (Admin ID များ စာရင်း)
 ADMIN_IDS = [7974865879, 7177628115]
-GEMINI_API_KEY = "AQ.Ab8RN6KyZPxAwdKvzTfUeDI4uAPi8uPS71SWbYWU55NeExC_Bg"
 
 FORCE_JOIN_GROUP_ID = -1004489775235
 FORCE_JOIN_LINK = "https://t.me/+00J7JktW8bJlZTY1"
 DATABASE_URL = "postgresql://postgres.fdfcifwziqrqqjimtqgm:zaykaunghtet704%23%40@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres"
 
-# Gemini AI Setup
-try:
-    genai.configure(api_key=GEMINI_API_KEY)
-    ai_model = genai.GenerativeModel('gemini-1.5-flash')
-except Exception as e:
-    print(f"Gemini Init Error: {e}")
-
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ==========================================
-# 🌐 FLASK KEEP ALIVE SERVER
-# ==========================================
-app = Flask('')
-
-@app.route('/')
-def home():
-    return "Bot is running 24/7 online!"
-
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
-
-def keep_alive():
-    t = threading.Thread(target=run_flask)
-    t.daemon = True
-    t.start()
-
-keep_alive()
-
-# ==========================================
-# SUPABASE DATABASE HELPERS
+# SUPABASE DATABASE SETUP & HELPERS
 # ==========================================
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL)
 
 def init_db():
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                user_id BIGINT PRIMARY KEY,
-                first_name TEXT,
-                username TEXT
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS groups (
-                chat_id BIGINT PRIMARY KEY,
-                title TEXT,
-                added_by_id BIGINT,
-                added_by_name TEXT
-            )
-        ''')
-        conn.commit()
-        cursor.close()
-        conn.close()
-    except Exception as e:
-        print(f"DB Init Error: {e}")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id BIGINT PRIMARY KEY,
+            first_name TEXT,
+            username TEXT
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS groups (
+            chat_id BIGINT PRIMARY KEY,
+            title TEXT,
+            added_by_id BIGINT,
+            added_by_name TEXT
+        )
+    ''')
+    conn.commit()
+    cursor.close()
+    conn.close()
 
 init_db()
 
@@ -98,6 +65,17 @@ def save_user(user):
     except Exception as e:
         print(f"Error saving user: {e}")
 
+def delete_user(user_id):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM users WHERE user_id = %s', (user_id,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"Error deleting user: {e}")
+
 def save_group(chat_id, title, added_by_id, added_by_name):
     try:
         conn = get_db_connection()
@@ -114,180 +92,238 @@ def save_group(chat_id, title, added_by_id, added_by_name):
     except Exception as e:
         print(f"Error saving group: {e}")
 
+def delete_group(chat_id):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM groups WHERE chat_id = %s', (chat_id,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"Error deleting group: {e}")
+
 def is_owner(user_id):
     return user_id in ADMIN_IDS
 
-# ==========================================
-# 🖼 AI CARD CHARACTER IDENTIFIER
-# ==========================================
-def identify_character_from_message(message):
+def is_group_admin(chat_id, user_id):
     try:
-        # မက်ဆေ့ခ်ျမှာ ပုံပါမပါ စစ်ဆေးခြင်း
-        if not message.photo:
-            return None
+        member = bot.get_chat_member(chat_id, user_id)
+        return member.status in ['creator', 'administrator'] or is_owner(user_id)
+    except Exception:
+        return False
 
-        file_id = message.photo[-1].file_id
-        file_info = bot.get_file(file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        
-        image = Image.open(io.BytesIO(downloaded_file))
-        
-        prompt = (
-            "Identify the character in this image. "
-            "Reply strictly ONLY with the character name (e.g. Ada Wong, Shanks, Rem). "
-            "Do NOT add any sentences, brackets, or explanations."
-        )
-        
-        response = ai_model.generate_content([prompt, image])
-        char_name = response.text.strip()
-        
-        if char_name:
-            clean_name = char_name.replace("`", "").replace("*", "")
-            hint_cmd = f"/guess {clean_name.lower()}"
-            full_cmd = f"/guess {clean_name}"
-            catch_cmd = f"/catch {clean_name}"
-            
-            return (
-                f"🎯 **Character Found!**\n\n"
-                f"👤 **Name:** `{clean_name}`\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"🔹 **Hint:** `{hint_cmd}`\n"
-                f"🔸 **Full:** `{full_cmd}`\n"
-                f"⚔️ **Catch:** `{catch_cmd}`"
-            )
-    except Exception as e:
-        print(f"AI Recognition Error: {e}")
-    return None
-
-# ==========================================
-# PHOTO HANDLER
-# ==========================================
-@bot.message_handler(content_types=['photo'])
-def handle_photos(message):
-    # Group ထဲဖြစ်ပါက Group စာရင်းသွင်းခြင်း
-    if message.chat.type in ['group', 'supergroup']:
-        save_group(message.chat.id, message.chat.title, message.from_user.id, message.from_user.first_name)
-
-    # AI နဲ့ Character Name ရှာခြင်း
-    ai_reply = identify_character_from_message(message)
-    if ai_reply:
-        bot.reply_to(message, ai_reply, parse_mode="Markdown")
-
-# ==========================================
-# ADMIN COMMANDS (STATUS, STATS, GROUPS, BROADCAST)
-# ==========================================
-@bot.message_handler(commands=['status'])
-def cmd_status(message):
-    if is_owner(message.from_user.id):
-        bot.reply_to(message, "🟢 Bot is Online and Running normally!")
-
-@bot.message_handler(commands=['stats'])
-def cmd_stats(message):
-    if not is_owner(message.from_user.id):
-        return
+def is_user_joined(user_id):
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT COUNT(*) FROM users')
-        user_count = cursor.fetchone()[0]
-        cursor.execute('SELECT COUNT(*) FROM groups')
-        group_count = cursor.fetchone()[0]
-        cursor.close()
-        conn.close()
+        member = bot.get_chat_member(FORCE_JOIN_GROUP_ID, user_id)
+        if member.status in ['creator', 'administrator', 'member']:
+            return True
+        return False
+    except Exception:
+        return True
 
-        bot.reply_to(message, f"📊 Bot Statistics\n\n👤 Users: {user_count}\n👥 Groups: {group_count}")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Database Error: {e}")
+def get_force_join_markup():
+    markup = InlineKeyboardMarkup()
+    btn_join = InlineKeyboardButton("📢 Join Group", url=FORCE_JOIN_LINK)
+    btn_check = InlineKeyboardButton("✅ Check Joined", callback_data="check_joined")
+    markup.add(btn_join)
+    markup.add(btn_check)
+    return markup
 
-@bot.message_handler(commands=['groups'])
-def cmd_groups(message):
-    if not is_owner(message.from_user.id):
-        return
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT title, added_by_name FROM groups')
-        rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
-
-        if not rows:
-            bot.reply_to(message, "👥 မည်သည့် Group မှ မရှိသေးပါ။")
-            return
-
-        text = "👥 Group List:\n\n"
-        for i, row in enumerate(rows, 1):
-            text += f"{i}. {row[0]} (Added by: {row[1]})\n"
-        bot.reply_to(message, text)
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: {e}")
-
-@bot.message_handler(commands=['broadcast'])
-def cmd_broadcast(message):
-    if not is_owner(message.from_user.id):
-        return
-    
-    command_text = message.text.replace('/broadcast', '').strip()
-    if not command_text and not message.reply_to_message:
-        bot.reply_to(message, "⚠️ ကျေးဇူးပြု၍ စာရိုက်ပါ သို့မဟုတ် Message ကို Reply လုပ်ပြီး `/broadcast <ကြော်ငြာစာ>` ပို့ပါ။", parse_mode="Markdown")
-        return
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT user_id FROM users')
-    users = cursor.fetchall()
-    cursor.execute('SELECT chat_id FROM groups')
-    groups = cursor.fetchall()
-    cursor.close()
-    conn.close()
-
-    targets = [u[0] for u in users] + [g[0] for g in groups]
-    success, failed = 0, 0
-    
-    status_msg = bot.reply_to(message, "📢 Broadcast စတင်ပို့နေပါပြီ...")
-
-    for chat_id in targets:
+# ==========================================
+# 🔄 ANTI-SLEEP SYSTEM
+# ==========================================
+def keep_alive():
+    while True:
+        time.sleep(300)
         try:
-            if message.reply_to_message:
-                bot.copy_message(chat_id, message.chat.id, message.reply_to_message.message_id)
-            else:
-                bot.send_message(chat_id, command_text)
-            success += 1
-            time.sleep(0.05)
+            bot.get_me()
         except Exception:
-            failed += 1
+            pass
 
-    bot.edit_message_text(f"✅ **Broadcast အောင်မြင်ပါသည်!**\n\n🎯 Total Target: {len(targets)}\n🟢 အောင်မြင်: {success}\n🔴 ကျရှုံး: {failed}", chat_id=message.chat.id, message_id=status_msg.message_id, parse_mode="Markdown")
+threading.Thread(target=keep_alive, daemon=True).start()
 
 # ==========================================
-# GENERAL TEXT HANDLER
+# 👥 GROUP AUTOMATION HANDLERS (NEW FEATURES)
 # ==========================================
-@bot.message_handler(func=lambda message: True, content_types=['text', 'video', 'document'])
-def handle_other_messages(message):
-    text_to_check = message.text or ""
 
+# 1. Welcome Message & Auto-delete "Joined Group" message
+@bot.message_handler(content_types=['new_chat_members'])
+def welcome_new_member(message):
+    try:
+        # Group joined message ကို အမှိုက်ရှင်းသည့်အနေဖြင့် ဖျက်ပါမည်
+        bot.delete_message(message.chat.id, message.message_id)
+    except Exception:
+        pass
+
+    for user in message.new_chat_members:
+        # Bot ကိုယ်တိုင် Group ထဲ ရောက်လာပါက
+        if user.id == bot.get_me().id:
+            save_group(message.chat.id, message.chat.title, message.from_user.id, message.from_user.first_name)
+            bot.send_message(message.chat.id, f"👋 မင်္ဂလာပါ! **{message.chat.title}** ဂျီပီမှာ Bot ကို Admin အရာရှိအဖြစ် ခန့်အပ်ပေးပါရန်။", parse_mode="Markdown")
+        else:
+            welcome_text = f"👋 မင်္ဂလာပါ [{user.first_name}](tg://user?id={user.id})\n\n**{message.chat.title}** ဂျီပီမှ နွေးထွေးစွာ ကြိုဆိုပါတယ်။"
+            bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown")
+
+# 2. Auto-delete "Left Group" message
+@bot.message_handler(content_types=['left_chat_member'])
+def auto_clean_left_member(message):
+    try:
+        bot.delete_message(message.chat.id, message.message_id)
+    except Exception:
+        pass
+
+@bot.my_chat_member_handler()
+def track_group_addition(my_chat_member):
+    new_status = my_chat_member.new_chat_member.status
+    chat = my_chat_member.chat
+    user = my_chat_member.from_user
+
+    if chat.type in ['group', 'supergroup']:
+        if new_status in ['member', 'administrator']:
+            user_fullname = f"{user.first_name or ''} {user.last_name or ''}".strip()
+            if user.username:
+                user_fullname += f" (@{user.username})"
+            save_group(chat.id, chat.title, user.id, user_fullname)
+        elif new_status in ['left', 'kicked']:
+            delete_group(chat.id)
+
+@bot.callback_query_handler(func=lambda call: call.data == "check_joined")
+def callback_check_joined(call):
+    user_id = call.from_user.id
+    if is_user_joined(user_id):
+        bot.answer_callback_query(call.id, "✅ ကျေးဇူးတင်ပါတယ်! Group ထဲသို့ ဝင်ရောက်ပြီးပါပြီ။", show_alert=True)
+        bot.edit_message_text(
+            "👋 မင်္ဂလာပါ! Group ထဲသို့ အောင်မြင်စွာ ဝင်ရောက်ပြီးပါပြီ။",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id
+        )
+    else:
+        bot.answer_callback_query(call.id, "❌ Group ထဲသို့ မဝင်ရသေးပါ။ အရင် ဝင်ရောက်ပေးပါ။", show_alert=True)
+
+# ==========================================
+# MAIN MESSAGE HANDLER
+# ==========================================
+@bot.message_handler(func=lambda message: True, content_types=['text', 'photo', 'video', 'document'])
+def handle_all_messages(message):
+    text = message.text if message.text else ""
+
+    # PRIVATE CHAT LOGIC
     if message.chat.type == 'private':
         save_user(message.from_user)
+
+        if not is_owner(message.from_user.id):
+            user = message.from_user
+            user_info = f"📩 **New Message Received!**\n\n👤 **From:** {user.first_name or ''} {user.last_name or ''}\n🆔 **User ID:** `{user.id}`\n🔗 **Username:** @{user.username or 'မရှိပါ'}\n\n💬 **Message:**"
+            
+            for admin_id in ADMIN_IDS:
+                try:
+                    bot.send_message(admin_id, user_info, parse_mode="Markdown")
+                    bot.forward_message(admin_id, message.chat.id, message.message_id)
+                except Exception as e:
+                    print(f"Error forwarding: {e}")
+
+    # GROUP CHAT LOGIC
     elif message.chat.type in ['group', 'supergroup']:
-        save_group(message.chat.id, message.chat.title, message.from_user.id, message.from_user.first_name)
+        # 1. Anti-Link (Group ထဲတွင် Link လာဖြန့်ပါက ဖျက်ခြင်း)
+        if not is_group_admin(message.chat.id, message.from_user.id):
+            if re.search(r'(https?://|t\.me/|telegram\.me/)', text, re.IGNORECASE):
+                try:
+                    bot.delete_message(message.chat.id, message.message_id)
+                    bot.send_message(message.chat.id, f"⚠️ [{message.from_user.first_name}](tg://user?id={message.from_user.id}) ဂျီပီထဲတွင် Link များ ပို့ခွင့်မရှိပါ။", parse_mode="Markdown")
+                    return
+                except Exception:
+                    pass
 
-    if text_to_check.startswith('/start'):
+        # 2. GROUP ADMIN COMMANDS
+        if text.startswith('/pin'):
+            if is_group_admin(message.chat.id, message.from_user.id) and message.reply_to_message:
+                try:
+                    bot.pin_chat_message(message.chat.id, message.reply_to_message.message_id)
+                    bot.reply_to(message, "📌 Message ကို Pin ထိုးလိုက်ပါပြီ။")
+                except Exception as e:
+                    bot.reply_to(message, f"❌ Pin ထိုးမရပါ: Bot ကို Admin 권한 ပေးထားပါသလား။")
+            return
+
+        elif text.startswith('/unpin'):
+            if is_group_admin(message.chat.id, message.from_user.id):
+                try:
+                    bot.unpin_chat_message(message.chat.id)
+                    bot.reply_to(message, "📌 Pin ဖြုတ်လိုက်ပါပြီ။")
+                except Exception:
+                    pass
+            return
+
+        elif text.startswith('/mute'):
+            if is_group_admin(message.chat.id, message.from_user.id) and message.reply_to_message:
+                args = text.split()
+                minutes = int(args[1]) if len(args) > 1 and args[1].isdigit() else 10
+                until_time = int(time.time()) + (minutes * 60)
+                try:
+                    bot.restrict_chat_member(message.chat.id, message.reply_to_message.from_user.id, until_date=until_time, can_send_messages=False)
+                    bot.reply_to(message, f"🔇 [{message.reply_to_message.from_user.first_name}](tg://user?id={message.reply_to_message.from_user.id}) အား {minutes} မိနစ် Mute လိုက်ပါပြီ။", parse_mode="Markdown")
+                except Exception as e:
+                    bot.reply_to(message, f"❌ Error: {e}")
+            return
+
+        elif text.startswith('/unmute'):
+            if is_group_admin(message.chat.id, message.from_user.id) and message.reply_to_message:
+                try:
+                    bot.restrict_chat_member(
+                        message.chat.id, 
+                        message.reply_to_message.from_user.id, 
+                        can_send_messages=True, 
+                        can_send_media_messages=True, 
+                        can_send_other_messages=True, 
+                        can_add_web_page_previews=True
+                    )
+                    bot.reply_to(message, f"🔊 Mute ဖြုတ်ပေးလိုက်ပါပြီ။")
+                except Exception as e:
+                    bot.reply_to(message, f"❌ Error: {e}")
+            return
+
+        elif text.startswith('/ban') or text.startswith('/kick'):
+            if is_group_admin(message.chat.id, message.from_user.id) and message.reply_to_message:
+                try:
+                    bot.ban_chat_member(message.chat.id, message.reply_to_message.from_user.id)
+                    bot.reply_to(message, f"🚫 [{message.reply_to_message.from_user.first_name}](tg://user?id={message.reply_to_message.from_user.id}) အား Group မှ Ban လိုက်ပါပြီ။", parse_mode="Markdown")
+                except Exception as e:
+                    bot.reply_to(message, f"❌ Error: {e}")
+            return
+
+    # GENERAL COMMANDS
+    if text.startswith('/start'):
         if is_owner(message.from_user.id):
-            bot.reply_to(message, "👋 မင်္ဂလာပါ Admin! Control Panel ကို သုံးနိုင်ပါပြီ။ /help နှိပ်၍ ကြည့်ပါ။")
+            bot.reply_to(message, "👋 မင်္ဂလာပါ Admin! ကြော်ငြာများ ပို့ရန်နှင့် စာရင်းများကြည့်ရန် /help ကို နှိပ်ပါ။")
+            return
+        
+        if not is_user_joined(message.from_user.id):
+            bot.reply_to(
+                message, 
+                "⚠️ **သတိပေးချက်**\n\nBot ကို အသုံးပြုနိုင်ရန်အတွက် အောက်ပါ Group သို့ အရင် Join ပေးပါရန် မေတ္တာရပ်ခံအပ်ပါသည်။", 
+                reply_markup=get_force_join_markup(),
+                parse_mode="Markdown"
+            )
         else:
-            bot.reply_to(message, "👋 မင်္ဂလာပါ! ကဒ်ပုံများကို ပို့ပေးပါက AI မှ Character နာမည်နှင့် Command များကို ထုတ်ပေးပါမည်။")
+            bot.reply_to(message, "👋 မင်္ဂလာပါ! Group ထဲသို့ ဝင်ရောက်ထားပြီးသည့်အတွက် ကျေးဇူးတင်ပါသည်။")
 
-    elif text_to_check.startswith('/help'):
+    elif text.startswith('/help'):
         if not is_owner(message.from_user.id):
             return
         help_text = (
-            "🛠 Admin Control Panel\n\n"
-            "🟢 /status - Bot အလုပ်လုပ်နေလား စစ်ဆေးရန်\n"
-            "📊 /stats - သုံးစွဲသူနှင့် ဂျီပီ စုစုပေါင်း အရေအတွက်\n"
-            "👥 /groups - ဂျီပီများ၊ ထည့်သွင်းသူ စာရင်း\n"
-            "📢 /broadcast <စာ> - ကြော်ငြာ ပို့ရန် (User + Group အကုန်ရောက်သည်)"
+            "🛠 **Admin Control Panel**\n\n"
+            "🟢 `/status` - Bot Online ဟုတ်မဟုတ် စစ်ရန်\n"
+            "📊 `/stats` - သုံးစွဲသူနှင့် ဂျီပီ အရေအတွက်\n"
+            "👥 `/groups` - ဂျီပီများ စာရင်းကြည့်ရန်\n"
+            "📢 `/broadcast <စာ>` - ကြော်ငြာ ပို့ရန်\n\n"
+            "👥 **Group Admin Commands (In Group):**\n"
+            "📌 `/pin` - Message ကို Reply လုပ်ပြီး Pin ထိုးရန်\n"
+            "📌 `/unpin` - Pin ဖြုတ်ရန်\n"
+            "🔇 `/mute <မိနစ်>` - Reply လုပ်ထားသူအား Mute ရန်\n"
+            "🔊 `/unmute` - Mute ဖြုတ်ရန်\n"
+            "🚫 `/ban` သို့မဟုတ် `/kick` - Group မှ Ban ထုတ်ရန်"
         )
-        bot.reply_to(message, help_text)
+        bot.reply_to(message, help_text, parse_mode="Markdown")
 
 print("Bot စတင်ပွင့်နေပါပြီ...")
 bot.infinity_polling(skip_pending=True)
