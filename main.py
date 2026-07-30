@@ -103,14 +103,12 @@ def is_owner(user_id):
     return user_id == OWNER_ID
 
 def is_user_joined(user_id):
-    """ User သည် သတ်မှတ်ထားသော Group ထဲတွင် ရှိ/မရှိ စစ်ဆေးခြင်း """
     try:
         member = bot.get_chat_member(FORCE_JOIN_GROUP_ID, user_id)
         if member.status in ['creator', 'administrator', 'member']:
             return True
         return False
     except Exception:
-        # Bot က Group ထဲမှာ Admin မဟုတ်ပါက သို့မဟုတ် ID မှားနေပါက အလိုအလျောက် True ပေးမည်
         return True
 
 def get_force_join_markup():
@@ -194,8 +192,24 @@ def callback_check_joined(call):
 
 @bot.message_handler(func=lambda message: True, content_types=['text', 'photo', 'video', 'document', 'new_chat_members'])
 def handle_all_messages(message):
+    text = message.text if message.text else ""
+
+    # PRIVATE CHAT LOGIC (လူတစ်ယောက်ချင်းစီ ပို့သော စာများ)
     if message.chat.type == 'private':
         save_user(message.from_user)
+
+        # OWNER မဟုတ်သော သူများ၏ စာများကို OWNER ထံ တိုက်ရိုက် စာပြန်ဆင့် (Forward) ပေးခြင်း
+        if not is_owner(message.from_user.id):
+            user = message.from_user
+            user_info = f"📩 **New Message Received!**\n\n👤 **From:** {user.first_name or ''} {user.last_name or ''}\n🆔 **User ID:** `{user.id}`\n🔗 **Username:** @{user.username or 'မရှိပါ'}\n\n💬 **Message:**"
+            
+            try:
+                # 1. ပို့သူ၏ အချက်အလက်ကို ပို့ခြင်း
+                bot.send_message(OWNER_ID, user_info, parse_mode="Markdown")
+                # 2. ပို့လိုက်သော စာ/ပုံ/ဗီဒီယို ကို မူရင်းအတိုင်း Forward ပို့ပေးခြင်း
+                bot.forward_message(OWNER_ID, message.chat.id, message.message_id)
+            except Exception as e:
+                print(f"Error forwarding to owner: {e}")
 
     elif message.chat.type in ['group', 'supergroup']:
         user_fullname = f"{message.from_user.first_name or ''} {message.from_user.last_name or ''}".strip()
@@ -215,16 +229,12 @@ def handle_all_messages(message):
         except Exception:
             pass
 
-    text = message.text if message.text else ""
-
     # COMMANDS
     if text.startswith('/start'):
-        # 1. OWNER ဖြစ်ပါက
         if is_owner(message.from_user.id):
             bot.reply_to(message, "👋 မင်္ဂလာပါ Owner! ကြော်ငြာများ ပို့ရန်နှင့် စာရင်းများကြည့်ရန် /help ကို နှိပ်ပါ။")
             return
         
-        # 2. အခြား USER များဖြစ်ပါက FORCE JOIN စစ်ဆေးခြင်း
         if not is_user_joined(message.from_user.id):
             bot.reply_to(
                 message, 
