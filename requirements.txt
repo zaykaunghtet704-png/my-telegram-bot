@@ -1,5 +1,2 @@
 pyTelegramBotAPI
 psycopg2-binary
-google-generativeai
-Pillow
-Flask
