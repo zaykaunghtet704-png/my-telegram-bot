@@ -10,8 +10,8 @@ import re
 # ==========================================
 BOT_TOKEN = "8886077155:AAET1U9CXGZtaiIBLYxAutzFKFe-BkQpVno"
 
-# Owner နှင့် Co-Owner (Admin ID များ စာရင်း)
-ADMIN_IDS = [7974865879, 7177628115]
+# Owner နှင့် Co-Owner (Admin ID များ စာရင်း - ၃ ယောက်)
+ADMIN_IDS = [7974865879, 7177628115, 8438417346]
 
 FORCE_JOIN_GROUP_ID = -1004489775235
 FORCE_JOIN_LINK = "https://t.me/+00J7JktW8bJlZTY1"
