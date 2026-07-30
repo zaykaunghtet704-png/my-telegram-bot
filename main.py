@@ -3,18 +3,31 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import psycopg2
 import time
 import threading
+import google.generativeai as genai
+from PIL import Image
+import io
 
 # ==========================================
 # CONFIGURATION
 # ==========================================
 BOT_TOKEN = "8886077155:AAET1U9CXGZtaiIBLYxAutzFKFe-BkQpVno"
 
-# Owner နှင့် Co-Owner (Admin ID များ စာရင်း)
+# Owner နှင့် Admin ID များ
 ADMIN_IDS = [7974865879, 7177628115]
+
+# Gemini API Key (ပေါင်းထည့်ပေးထားပြီးပါပြီ)
+GEMINI_API_KEY = "AQ.Ab8RN6KyZPxAwdKvzTfUeDI4uAPi8uPS71SWbYWU55NeExC_Bg"
 
 FORCE_JOIN_GROUP_ID = -1004489775235
 FORCE_JOIN_LINK = "https://t.me/+00J7JktW8bJlZTY1"
 DATABASE_URL = "postgresql://postgres.fdfcifwziqrqqjimtqgm:zaykaunghtet704%23%40@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres"
+
+# Setup Gemini AI
+try:
+    genai.configure(api_key=GEMINI_API_KEY)
+    ai_model = genai.GenerativeModel('gemini-1.5-flash')
+except Exception as e:
+    print(f"Gemini Setup Error: {e}")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -103,7 +116,6 @@ def delete_group(chat_id):
         print(f"Error deleting group: {e}")
 
 def is_owner(user_id):
-    """ ADMIN_IDS စာရင်းထဲတွင် ပါဝင်ပါက Admin ဟု သတ်မှတ်မည် """
     return user_id in ADMIN_IDS
 
 def is_user_joined(user_id):
@@ -124,9 +136,8 @@ def get_force_join_markup():
     return markup
 
 # ==========================================
-# 🔄 ANTI-SLEEP & AUTO-CHECK SYSTEM
+# 🔄 ANTI-SLEEP SYSTEM
 # ==========================================
-
 def keep_alive():
     while True:
         time.sleep(300)
@@ -137,33 +148,34 @@ def keep_alive():
 
 threading.Thread(target=keep_alive, daemon=True).start()
 
-def check_all_groups():
+# ==========================================
+# 🖼 AI CARD CHARACTER IDENTIFIER
+# ==========================================
+def identify_card_character(message):
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT chat_id, title FROM groups')
-        groups = cursor.fetchall()
-        cursor.close()
-        conn.close()
-
-        active_count = 0
-        removed_count = 0
-
-        for chat_id, title in groups:
-            try:
-                bot.get_chat(chat_id)
-                active_count += 1
-            except Exception:
-                delete_group(chat_id)
-                removed_count += 1
-
-        return active_count, removed_count
+        file_id = message.photo[-1].file_id
+        file_info = bot.get_file(file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        
+        image = Image.open(io.BytesIO(downloaded_file))
+        
+        prompt = (
+            "Identify the anime/game character in this image or card screenshot. "
+            "Reply strictly in this format without extra explanation:\n\n"
+            "NAME: <Character Name>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "🔹 Hint: /guess <lowercase character name>\n"
+            "🔸 Full: /guess <Exact Character Name>"
+        )
+        
+        response = ai_model.generate_content([prompt, image])
+        return response.text.strip()
     except Exception as e:
-        print(f"Error checking groups: {e}")
-        return 0, 0
+        print(f"AI Identification Error: {e}")
+        return None
 
 # ==========================================
-# AUTOMATED TRACKING & HANDLERS
+# AUTOMATED HANDLERS
 # ==========================================
 
 @bot.my_chat_member_handler()
@@ -198,14 +210,20 @@ def callback_check_joined(call):
 def handle_all_messages(message):
     text = message.text if message.text else ""
 
-    # PRIVATE CHAT LOGIC (လူတစ်ယောက်ချင်းစီ ပို့သော စာများ)
+    # 1. ပုံပါသော မက်ဆေ့ခ်ျ ရောက်လာပါက AI ဖြင့် Character Name ရှာဖွေပေးခြင်း
+    if message.photo:
+        # AI မှ Card နာမည် ရှာခိုင်းခြင်း
+        ai_result = identify_card_character(message)
+        if ai_result:
+            bot.reply_to(message, f"🎯 **Card Finder Result:**\n\n{ai_result}", parse_mode="Markdown")
+
+    # PRIVATE CHAT LOGIC (FORWARD TO ADMINS)
     if message.chat.type == 'private':
         save_user(message.from_user)
 
-        # ADMIN/OWNER မဟုတ်သော သူများ၏ စာများကို ADMIN များထံ Forward ပို့ပေးခြင်း
         if not is_owner(message.from_user.id):
             user = message.from_user
-            user_info = f"📩 **New Message Received!**\n\n👤 **From:** {user.first_name or ''} {user.last_name or ''}\n🆔 **User ID:** `{user.id}`\n🔗 **Username:** @{user.username or 'မရှိပါ'}\n\n💬 **Message:**"
+            user_info = f"📩 **New Message Received!**\n\n👤 **From:** {user.first_name or ''} {user.last_name or ''}\n🆔 **User ID:** `{user.id}`\n🔗 **Username:** @{user.username or 'မရှိပါ'}"
             
             for admin_id in ADMIN_IDS:
                 try:
@@ -246,7 +264,7 @@ def handle_all_messages(message):
                 parse_mode="Markdown"
             )
         else:
-            bot.reply_to(message, "👋 မင်္ဂလာပါ! Group ထဲသို့ ဝင်ရောက်ထားပြီးသည့်အတွက် ကျေးဇူးတင်ပါသည်။")
+            bot.reply_to(message, "👋 မင်္ဂလာပါ! ကဒ်ပုံများကို ပို့ပေးပါက AI မှ နာမည် အလိုအလျောက် ရှာဖွေပေးပါမည်။")
 
     elif text.startswith('/help'):
         if not is_owner(message.from_user.id):
@@ -256,158 +274,9 @@ def handle_all_messages(message):
             "🟢 `/status` - Bot အလုပ်လုပ်နေလား စစ်ဆေးရန်\n"
             "📊 `/stats` - သုံးစွဲသူနှင့် ဂျီပီ စုစုပေါင်း အရေအတွက်\n"
             "👥 `/groups` - ဂျီပီများ၊ ထည့်သွင်းသူနှင့် လူဦးရေ စာရင်း\n"
-            "🔍 `/checkgroups` - ဂျီပီများ အလုပ်လုပ် မလုပ် ကိုယ်တိုင် စစ်ဆေးရန်\n"
             "📢 `/broadcast <စာ>` - ကြော်ငြာ စာ/ပုံ/ဗီဒီယို ပို့ရန်"
         )
         bot.reply_to(message, help_text, parse_mode="Markdown")
-
-    elif text.startswith('/status'):
-        if not is_owner(message.from_user.id):
-            return
-        bot.reply_to(message, "✅ **Bot status:** Online (မအိပ်ဘဲ အလုပ်လုပ်နေပါသည်)")
-
-    elif text.startswith('/stats'):
-        if not is_owner(message.from_user.id):
-            return
-        try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute('SELECT COUNT(*) FROM users')
-            u_count = cursor.fetchone()[0]
-            cursor.execute('SELECT COUNT(*) FROM groups')
-            g_count = cursor.fetchone()[0]
-            cursor.close()
-            conn.close()
-
-            bot.reply_to(message, f"📊 **Bot စာရင်းချုပ်**\n\n👤 အသုံးပြုသူ (Users): {u_count} ယောက်\n👥 ဂျီပီများ (Groups): {g_count} ခု", parse_mode="Markdown")
-        except Exception as e:
-            bot.reply_to(message, f"❌ Error: {e}")
-
-    elif text.startswith('/checkgroups'):
-        if not is_owner(message.from_user.id):
-            return
-        
-        status = bot.reply_to(message, "🔍 ဂျီပီများအားလုံးကို စစ်ဆေးနေပါသည်...")
-        active, removed = check_all_groups()
-        
-        res = (
-            "✅ **ဂျီပီများ စစ်ဆေးပြီးစီးပါပြီ**\n\n"
-            f"💚 ပုံမှန် အလုပ်လုပ်နေသော ဂျီပီ: {active} ခု\n"
-            f"❌ Bot ဖယ်ထုတ်ခံထားရ၍ စာရင်းမှ ရှင်းထုတ်လိုက်သော ဂျီပီ: {removed} ခု"
-        )
-        bot.edit_message_text(res, chat_id=message.chat.id, message_id=status.message_id, parse_mode="Markdown")
-
-    elif text.startswith('/groups'):
-        if not is_owner(message.from_user.id):
-            return
-
-        try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute('SELECT chat_id, title, added_by_name FROM groups')
-            groups_data = cursor.fetchall()
-            cursor.close()
-            conn.close()
-
-            if not groups_data:
-                bot.reply_to(message, "ℹ️ Bot ထည့်ထားသော ဂျီပီ စာရင်း မရှိသေးပါ။")
-                return
-
-            report = "👥 Bot ရောက်ရှိနေသော ဂျီပီများ စာရင်း\n\n"
-            for index, g in enumerate(groups_data, 1):
-                chat_id, title, added_by = g[0], g[1], g[2]
-                try:
-                    members_count = bot.get_chat_member_count(chat_id)
-                    member_str = f"{members_count} ယောက်"
-                except Exception:
-                    member_str = "စစ်မရပါ (Bot ဖယ်ထုတ်ခံထားရနိုင်သည်)"
-
-                report += f"{index}။ {title}\n"
-                report += f"   - 👤 ထည့်သွင်းသူ: {added_by or 'မသိရပါ'}\n"
-                report += f"   - 👨‍👩‍👧‍👦 ဂျီပီ လူဦးရေ: {member_str}\n\n"
-
-            if len(report) > 4000:
-                for x in range(0, len(report), 4000):
-                    bot.send_message(message.chat.id, report[x:x+4000])
-            else:
-                bot.reply_to(message, report)
-        except Exception as e:
-            bot.reply_to(message, f"❌ Error: {e}")
-
-    elif text.startswith('/broadcast'):
-        if not is_owner(message.from_user.id):
-            return
-
-        broadcast_text = text.replace('/broadcast', '').strip()
-        if not broadcast_text and not message.photo and not message.video and not message.document:
-            bot.reply_to(message, "⚠️ ကျေးဇူးပြု၍ ပို့ချင်သော ကြော်ငြာ စာသား သို့မဟုတ် ပုံ/ဗီဒီယို ထည့်သွင်းပါ။\nဥပမာ - `/broadcast မင်္ဂလာပါ`", parse_mode="Markdown")
-            return
-
-        status_msg = bot.reply_to(message, "⏳ ကြော်ငြာများ စတင်ပေးပို့နေပါပြီ...")
-
-        try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute('SELECT user_id FROM users')
-            users = [u[0] for u in cursor.fetchall()]
-            
-            cursor.execute('SELECT chat_id FROM groups')
-            groups = [g[0] for g in cursor.fetchall()]
-            cursor.close()
-            conn.close()
-
-            success = 0
-            failed_users = 0
-            failed_groups = 0
-
-            # 1. BROADCAST TO USERS
-            for user_id in users:
-                try:
-                    if message.photo:
-                        photo_id = message.photo[-1].file_id
-                        bot.send_photo(user_id, photo_id, caption=broadcast_text)
-                    elif message.video:
-                        video_id = message.video.file_id
-                        bot.send_video(user_id, video_id, caption=broadcast_text)
-                    else:
-                        bot.send_message(user_id, broadcast_text)
-                    
-                    success += 1
-                    time.sleep(0.05)
-                except Exception:
-                    failed_users += 1
-                    delete_user(user_id)
-
-            # 2. BROADCAST TO GROUPS
-            for group_id in groups:
-                try:
-                    if message.photo:
-                        photo_id = message.photo[-1].file_id
-                        bot.send_photo(group_id, photo_id, caption=broadcast_text)
-                    elif message.video:
-                        video_id = message.video.file_id
-                        bot.send_video(group_id, video_id, caption=broadcast_text)
-                    else:
-                        bot.send_message(group_id, broadcast_text)
-                    
-                    success += 1
-                    time.sleep(0.05)
-                except Exception:
-                    failed_groups += 1
-                    delete_group(group_id)
-
-            total_targets = len(users) + len(groups)
-
-            report = (
-                "📢 **ကြော်ငြာ ပို့ဆောင်မှု အစီရင်ခံစာ (Broadcast Report)**\n\n"
-                f"🎯 စုစုပေါင်း ပို့လွှတ်သည့် နေရာ: {total_targets}\n"
-                f"✅ အောင်မြင်စွာ ရောက်ရှိ: {success}\n"
-                f"❌ ပို့၍ မရသော User အရေအတွက်: {failed_users}\n"
-                f"❌ ပို့၍ မရသော Group အရေအတွက်: {failed_groups}"
-            )
-            bot.edit_message_text(report, chat_id=message.chat.id, message_id=status_msg.message_id, parse_mode="Markdown")
-        except Exception as e:
-            bot.reply_to(message, f"❌ Error: {e}")
 
 print("Bot စတင်ပွင့်နေပါပြီ...")
 bot.infinity_polling(skip_pending=True)
