@@ -19,7 +19,7 @@ DATABASE_URL = "postgresql://postgres.fdfcifwziqrqqjimtqgm:zaykaunghtet704%23%40
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# Set Menu Commands for Suggestions
+# Telegram Bot Menu Commands များ သတ်မှတ်ခြင်း
 bot.set_my_commands([
     telebot.types.BotCommand("start", "Bot ကို စတင်ရန်"),
     telebot.types.BotCommand("help", "အကူအညီနှင့် Commands များကြည့်ရန်"),
@@ -28,6 +28,9 @@ bot.set_my_commands([
     telebot.types.BotCommand("warns", "မိမိရရှိထားသော Warning စာရင်းစစ်ရန်"),
     telebot.types.BotCommand("filter", "Auto-Reply Keyword သတ်မှတ်ရန် (Admin)"),
     telebot.types.BotCommand("stop", "Auto-Reply Keyword ဖျက်ရန် (Admin)"),
+    telebot.types.BotCommand("save", "Note အသစ် မှတ်ရန် (Admin)"),
+    telebot.types.BotCommand("clear", "Note ဖျက်ရန် (Admin)"),
+    telebot.types.BotCommand("get", "Note ပြန်ကြည့်ရန်"),
     telebot.types.BotCommand("pin", "Message ကို Pin ထိုးရန် (Admin)"),
     telebot.types.BotCommand("unpin", "Pin ဖြုတ်ရန် (Admin)"),
     telebot.types.BotCommand("mute", "အဖွဲ့ဝင်အား Mute ရန် (Admin)"),
@@ -434,6 +437,23 @@ def cmd_get_notes(message):
         note_list = "\n".join([f"• `#{row[0]}`" for row in rows])
         bot.reply_to(message, f"📝 **Group မှတ်စု (Notes) များ:**\n\n{note_list}\n\nကြည့်ရှုရန် `/get <note_name>` သို့မဟုတ် `#{'note_name'}` ဟု ရိုက်ပါ။", parse_mode="Markdown")
 
+@bot.message_handler(func=lambda m: m.text and (m.text.startswith('/get') or m.text.startswith('!get')))
+def cmd_get_single_note(message):
+    if message.chat.type in ['group', 'supergroup']:
+        parts = message.text.split()
+        if len(parts) > 1:
+            note_name = parts[1].lower()
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT content FROM notes WHERE chat_id = %s AND note_name = %s', (message.chat.id, note_name))
+            row = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            if row:
+                bot.reply_to(message, row[0], parse_mode="Markdown")
+            else:
+                bot.reply_to(message, f"❌ **#{note_name}** အမည်ဖြင့် Note မရှိသေးပါ။", parse_mode="Markdown")
+
 @bot.message_handler(func=lambda m: m.text and (m.text.startswith('/warn') or m.text.startswith('!warn')) and not m.text.startswith('/warns'))
 def cmd_warn(message):
     if message.chat.type in ['group', 'supergroup'] and is_group_admin(message.chat.id, message.from_user.id):
@@ -622,7 +642,7 @@ def handle_all_messages(message):
                 except Exception:
                     pass
 
-        # 🎯 FILTER TRIGGER CHECK (စကားလုံးတူရင် အလိုအလျောက် Reply ပြန်ခြင်း)
+        # 🎯 FILTER TRIGGER CHECK
         if text and not text.startswith('/') and not text.startswith('!'):
             conn = get_db_connection()
             cursor = conn.cursor()
@@ -636,7 +656,7 @@ def handle_all_messages(message):
                     bot.reply_to(message, reply, parse_mode="Markdown")
                     return
 
-        # NOTE TRIGGER CHECK (#rules သို့မဟုတ် /get rules)
+        # NOTE TRIGGER CHECK (e.g. #rules)
         if text.startswith('#') and len(text) > 1:
             note_name = text[1:].lower().split()[0]
             conn = get_db_connection()
@@ -648,20 +668,6 @@ def handle_all_messages(message):
             if row:
                 bot.reply_to(message, row[0], parse_mode="Markdown")
                 return
-
-        elif text.startswith('/get') or text.startswith('!get'):
-            parts = text.split()
-            if len(parts) > 1:
-                note_name = parts[1].lower()
-                conn = get_db_connection()
-                cursor = conn.cursor()
-                cursor.execute('SELECT content FROM notes WHERE chat_id = %s AND note_name = %s', (message.chat.id, note_name))
-                row = cursor.fetchone()
-                cursor.close()
-                conn.close()
-                if row:
-                    bot.reply_to(message, row[0], parse_mode="Markdown")
-                    return
 
     # START & HELP COMMANDS
     if text.startswith('/start') or text.startswith('!start'):
