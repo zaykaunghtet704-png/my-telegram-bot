@@ -142,13 +142,25 @@ def get_rose_help_markup():
     return markup
 
 # ==========================================
-# 🔘 HELP CALLBACK HANDLERS
+# 🔘 HELP CALLBACK HANDLERS (WITH WORKING BACK BUTTON)
 # ==========================================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('help_'))
 def callback_help(call):
+    if call.data == "help_back":
+        try:
+            bot.edit_message_text(
+                "👋 မင်္ဂလာပါ! Group Control Bot မှ ကြိုဆိုပါတယ်။ အောက်ပါ Button များကို နှိပ်၍ အမိန့်များကို ကြည့်နိုင်ပါသည်။",
+                call.message.chat.id,
+                call.message.message_id,
+                reply_markup=get_rose_help_markup()
+            )
+        except Exception:
+            pass
+        return
+
     help_texts = {
-        "help_admin": "👑 **Admin & Sudo Commands**\n\n• `/addsudo` [reply/id] - Sudo user ထည့်ရန်\n• `/rmsudo` [reply/id] - Sudo user ဖြုတ်ရန်\n• `/status` - Bot ရဲ့ CPU/RAM status ကြည့်ရန်",
-        "help_mention": "📢 **Tag & Mention Commands**\n\n• `/all` [စာ] - Member အားလုံးကို Mention ခေါ်ရန်\n• `/admins` - Admins အားလုံးကို ခေါ်ရန်\n• `/stopmention` - Mention ခေါ်နေခြင်းကို ရပ်ရန်",
+        "help_admin": "👑 **Admin & Sudo Commands**\n\n• `/addsudo` [reply/id] - Sudo user ထည့်ရန်\n• `/rmsudo` [reply/id] - Sudo user ဖြုတ်ရန်\n• `/sudolist` - Sudo User စာရင်းကြည့်ရန်\n• `/status` - Bot ရဲ့ CPU/RAM status ကြည့်ရန်",
+        "help_mention": "📢 **Tag & Mention Commands**\n\n• `/all` [စာ] သို့မဟုတ် `@all` - Member အားလုံးကို Mention ခေါ်ရန်\n• `/admins` သို့မဟုတ် `@admins` - Admins အားလုံးကို ခေါ်ရန်\n• `/stopmention` - Mention ခေါ်နေခြင်းကို ရပ်ရန်",
         "help_badwords": "🚫 **Badwords Commands**\n\n• `/addbad` [word] - မကောင်းသောစာလုံး ထည့်ရန်\n• `/rmbad` [word] - ပြန်ဖြုတ်ရန်\n• `/badwords` - Badword စာရင်းကြည့်ရန်",
         "help_filters": "🎯 **Filter Commands**\n\n• `/filter` [keyword] [reply] - Auto-Reply ထည့်ရန်\n• `/stop` [keyword] - Filter ဖျက်ရန်\n• `/filters` - Filter စာရင်းကြည့်ရန်",
         "help_notes": "📝 **Notes Commands**\n\n• `/save` [notename] [content] - Note မှတ်ရန်\n• `/get` [notename] သို့မဟုတ် `#notename` - Note ကြည့်ရန်\n• `/clear` [notename] - Note ဖျက်ရန်",
@@ -162,21 +174,9 @@ def callback_help(call):
     
     text = help_texts.get(call.data, "ℹ️ အချက်အလက် မရှိသေးပါ။")
     back_markup = InlineKeyboardMarkup()
-    back_markup.add(InlineKeyboardButton("🔙 နောက်သို့", callback_data="help_back"))
+    back_markup.add(InlineKeyboardButton("⬅️ နောက်သို့", callback_data="help_back"))
     try:
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=back_markup)
-    except Exception:
-        pass
-
-@bot.callback_query_handler(func=lambda call: call.data == "help_back")
-def callback_help_back(call):
-    try:
-        bot.edit_message_text(
-            "👋 မင်္ဂလာပါ! Group Control Bot မှ ကြိုဆိုပါတယ်။ အောက်ပါ Button များကို နှိပ်၍ အမိန့်များကို ကြည့်နိုင်ပါသည်။",
-            call.message.chat.id,
-            call.message.message_id,
-            reply_markup=get_rose_help_markup()
-        )
     except Exception:
         pass
 
@@ -268,6 +268,29 @@ def cmd_rmsudo(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}")
 
+@bot.message_handler(commands=['sudolist'])
+def cmd_sudolist(message):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT user_id FROM sudo_users')
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        text = "👑 **Sudo Users List:**\n\n"
+        text += f"• **Owner:** `{OWNER_IDS[0]}`\n"
+        
+        if rows:
+            for r in rows:
+                text += f"• Sudo: `{r[0]}`\n"
+        else:
+            text += "\nℹ️ အခြား Sudo User များ မရှိသေးပါ။"
+            
+        bot.reply_to(message, text)
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {e}")
+
 # BAN / UNBAN / KICK
 @bot.message_handler(commands=['ban'])
 def cmd_ban(message):
@@ -331,7 +354,7 @@ def cmd_unmute(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}")
 
-# PIN / UNPIN (ERROR HANDLED)
+# PIN / UNPIN
 @bot.message_handler(commands=['pin'])
 def cmd_pin(message):
     if not is_authorized(message.from_user.id):
@@ -642,30 +665,47 @@ def cmd_broadcast(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Broadcast Error: {e}")
 
-# MENTION ALL / ADMINS
+# MENTION ALL / ADMINS IMPROVED SYSTEM
 def thread_mention_all(chat_id, text_to_send):
     mention_cancel_flags[chat_id] = False
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT user_id, first_name FROM users')
-        users = cursor.fetchall()
-        cursor.close()
-        conn.close()
-        
-        if not users:
-            bot.send_message(chat_id, "ℹ️ Database ထဲတွင် Member စာရင်း မရှိသေးပါ။")
+        users_dict = {}
+
+        # 1. Database မှ တဆင့် ယူခြင်း
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT user_id, first_name FROM users')
+            for u in cursor.fetchall():
+                users_dict[u[0]] = u[1]
+            cursor.close()
+            conn.close()
+        except Exception:
+            pass
+
+        # 2. Telegram Group Admin များ (စာမရေးဖူးသူများပါ) ရယူခြင်း
+        try:
+            admins = bot.get_chat_administrators(chat_id)
+            for adm in admins:
+                if not adm.user.is_bot:
+                    users_dict[adm.user.id] = adm.user.first_name
+        except Exception:
+            pass
+
+        if not users_dict:
+            bot.send_message(chat_id, "ℹ️ Member စာရင်း မတွေ့ရှိသေးပါ။")
             return
 
-        bot.send_message(chat_id, f"📢 စုစုပေါင်း Member (`{len(users)}`) ယောက်အား Mention ခေါ်ယူခြင်း စတင်ပါပြီ...")
+        user_list = list(users_dict.items())
+        bot.send_message(chat_id, f"📢 စုစုပေါင်း Member (`{len(user_list)}`) ယောက်အား Mention ခေါ်ယူခြင်း စတင်ပါပြီ...")
 
         chunk_size = 5
-        for i in range(0, len(users), chunk_size):
+        for i in range(0, len(user_list), chunk_size):
             if mention_cancel_flags.get(chat_id, False):
                 bot.send_message(chat_id, "🛑 Mention ခေါ်ယူခြင်းကို ရပ်တန့်လိုက်ပါပြီ။")
                 break
 
-            chunk = users[i:i + chunk_size]
+            chunk = user_list[i:i + chunk_size]
             mentions = [f"[{u[1]}](tg://user?id={u[0]})" for u in chunk]
             msg = f"📢 **{text_to_send}**\n\n" + " ".join(mentions)
             
@@ -707,12 +747,15 @@ def cmd_tag_admins(message):
         bot.reply_to(message, f"❌ Error: {e}")
 
 # ==========================================
-# ALL MESSAGES HANDLER (BADWORDS / FILTERS / WELCOME)
+# ALL MESSAGES HANDLER (SAVE USER / BADWORDS / FILTERS / WELCOME)
 # ==========================================
 @bot.message_handler(func=lambda message: True, content_types=['text', 'photo', 'video', 'document', 'animation', 'new_chat_members'])
 def handle_all_messages(message):
-    # Welcome New Members
+    # Welcome New Members & Record Users
     if message.content_type == 'new_chat_members':
+        for member in message.new_chat_members:
+            if not member.is_bot:
+                save_user(member)
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
