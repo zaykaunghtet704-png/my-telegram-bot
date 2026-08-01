@@ -196,22 +196,48 @@ def get_rose_help_markup():
     markup.add(*buttons)
     return markup
 
-LINK_PATTERN = re.compile(
-    r'('
-    r'https?://[^\s]+'
-    r'|www\.[^\s]+'
-    r'|t\.me/(?:\+|\bjoinchat\b|[a-zA-Z0-9_]+)'
-    r'|telegram\.me/[a-zA-Z0-9_]+'
-    r'|[a-zA-Z0-9.-]+\.(com|net|org|me|io|co|app|xyz|site|online|link|info|live|store|biz|mobi)\b'
-    r'|@[a-zA-Z0-9_]{4,}'
-    r')',
-    re.IGNORECASE
-)
+# ==========================================
+# 🔘 BUTTON CALLBACK HANDLER
+# ==========================================
+@bot.callback_query_handler(func=lambda call: call.data.startswith('help_'))
+def callback_help(call):
+    help_texts = {
+        "help_admin": "👑 **Admin & Sudo Commands**\n\n• `/addsudo` [reply/id] - Sudo user ထည့်ရန်\n• `/rmsudo` [reply/id] - Sudo user ဖြုတ်ရန်\n• `/status` - Bot ရဲ့ CPU/RAM status ကြည့်ရန်",
+        "help_mention": "📢 **Tag & Mention Commands**\n\n• `/all` [စာ] သို့မဟုတ် `@all` - Member အားလုံးကို Mention ခေါ်ရန်\n• `/admins` သို့မဟုတ် `@admins` - Admins အားလုံးကို ခေါ်ရန်\n• `/stopmention` - Mention ခေါ်နေခြင်းကို ရပ်ရန်",
+        "help_badwords": "🚫 **Badwords Commands**\n\n• `/addbad` [word] - မကောင်းသောစာလုံး ထည့်ရန်\n• `/rmbad` [word] - ပြန်ဖြုတ်ရန်\n• `/badwords` - Badword စာရင်းကြည့်ရန်",
+        "help_filters": "🎯 **Filter Commands**\n\n• `/filter` [keyword] [reply] - အော်တိုစာပြန် စနစ်ထည့်ရန်\n• `/stop` [keyword] - Filter ဖျက်ရန်\n• `/filters` - Filter စာရင်းကြည့်ရန်",
+        "help_notes": "📝 **Notes Commands**\n\n• `/save` [notename] [content] - Note မှတ်ရန်\n• `/get` [notename] သို့မဟုတ် `#notename` - Note ပြန်ယူရန်\n• `/clear` [notename] - Note ဖျက်ရန်",
+        "help_warns": "⚠️ **Warning Commands**\n\n• `/warn` [reply] - သတိပေးရန်\n• `/rmwarn` [reply] - သတိပေးချက် လျှော့ရန်\n• `/warns` - Warn စာရင်းကြည့်ရန်",
+        "help_welcome": "👋 **Welcome Commands**\n\n• `/setwelcome` [စာ] - Welcome message ပြောင်းရန်\n• `/welcome` - လက်ရှိ Welcome ကြည့်ရန်",
+        "help_antilink": "🛡 **Anti-Link System**\n\n• Group ထဲသို့ Link များ၊ Telegram Channel/Group Link များ လာပို့ပါက အလိုအလျောက် ဖျက်ပေးမည့် စနစ်ဖြစ်သည်။",
+        "help_pin": "📌 **Pin Commands**\n\n• `/pin` [reply] - Message ကို Pin ထိန်းရန်\n• `/unpin` - Pin ဖြုတ်ရန်",
+        "help_mute": "🔇 **Mute Commands**\n\n• `/mute` [reply] - စာရေးခွင့် ပိတ်ရန်\n• `/unmute` [reply] - ပြန်ဖွင့်ပေးရန်",
+        "help_ban": "🚫 **Ban & Kick Commands**\n\n• `/ban` [reply] - Group မှ ထုတ်ပစ်ရန် (Ban)\n• `/unban` [reply] - Unban လုပ်ရန်\n• `/kick` [reply] - Group မှ ခေတ္တ ထုတ်ရန်",
+        "help_broadcast": "📢 **Broadcast Commands**\n\n• `/broadcast` [စာ] - Bot သုံးနေသည့် Group/User အားလုံးထံ စာပို့ရန်"
+    }
+    
+    text = help_texts.get(call.data, "ℹ️ အချက်အလက် မရှိသေးပါ။")
+    
+    # Back Button ပါသော Inline Keyboard
+    back_markup = InlineKeyboardMarkup()
+    back_markup.add(InlineKeyboardButton("🔙 နောက်သို့", callback_data="help_back"))
+    
+    try:
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=back_markup)
+    except Exception:
+        pass
 
-def contains_link(text):
-    if not text:
-        return False
-    return bool(LINK_PATTERN.search(text))
+@bot.callback_query_handler(func=lambda call: call.data == "help_back")
+def callback_help_back(call):
+    try:
+        bot.edit_message_text(
+            "👋 မင်္ဂလာပါ! Group Control Bot မှ ကြိုဆိုပါတယ်။ အောက်ပါ Button များကို နှိပ်၍ အမိန့်များကို ကြည့်နိုင်ပါသည်။",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=get_rose_help_markup()
+        )
+    except Exception:
+        pass
 
 # ==========================================
 # BASIC COMMANDS & SYSTEM STATUS
@@ -223,23 +249,19 @@ def send_welcome(message):
 @bot.message_handler(commands=['status', 'system'])
 def cmd_status(message):
     try:
-        # CPU Info
         cpu_usage = psutil.cpu_percent(interval=1)
         cpu_count = psutil.cpu_count()
 
-        # RAM Info
         ram = psutil.virtual_memory()
-        ram_total = round(ram.total / (1024 ** 3), 2)  # GB
-        ram_used = round(ram.used / (1024 ** 3), 2)   # GB
+        ram_total = round(ram.total / (1024 ** 3), 2)
+        ram_used = round(ram.used / (1024 ** 3), 2)
         ram_percent = ram.percent
 
-        # Disk Info
         disk = psutil.disk_usage('/')
-        disk_total = round(disk.total / (1024 ** 3), 2) # GB
-        disk_used = round(disk.used / (1024 ** 3), 2)   # GB
+        disk_total = round(disk.total / (1024 ** 3), 2)
+        disk_used = round(disk.used / (1024 ** 3), 2)
         disk_percent = disk.percent
 
-        # System OS
         system_os = platform.system()
 
         status_msg = (
@@ -262,7 +284,6 @@ async def async_fetch_and_mention(chat_id, text_to_send):
     mention_cancel_flags[chat_id] = False
     members = []
     
-    # Safe Pyrogram Client Start Inside Async Event Loop
     async_pyro = Client("tg_bot_pyro", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
     try:
         await async_pyro.start()
