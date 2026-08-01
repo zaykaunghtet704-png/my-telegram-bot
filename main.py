@@ -181,7 +181,7 @@ def callback_help_back(call):
         pass
 
 # ==========================================
-# ⚙️ COMMAND HANDLERS
+# ⚙️ ALL COMMAND HANDLERS
 # ==========================================
 
 @bot.message_handler(commands=['start', 'help'])
@@ -214,6 +214,59 @@ def cmd_status(message):
         bot.reply_to(message, status_msg)
     except Exception as e:
         bot.reply_to(message, f"❌ Status Error: {e}")
+
+# SUDO SYSTEM
+@bot.message_handler(commands=['addsudo'])
+def cmd_addsudo(message):
+    if not is_owner(message.from_user.id):
+        return bot.reply_to(message, "❌ ဤ Command ကို Owner သာ သုံးနိုင်ပါသည်။")
+    target_id = None
+    if message.reply_to_message:
+        target_id = message.reply_to_message.from_user.id
+    else:
+        parts = message.text.split()
+        if len(parts) > 1 and parts[1].isdigit():
+            target_id = int(parts[1])
+    
+    if not target_id:
+        return bot.reply_to(message, "⚠️ သုံးနည်း: `/addsudo [User ID]` သို့မဟုတ် User ၏ စာကို Reply ပြန်ပါ။")
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('INSERT INTO sudo_users (user_id) VALUES (%s) ON CONFLICT DO NOTHING', (target_id,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        bot.reply_to(message, f"✅ User `{target_id}` အား Sudo User အဖြစ် ထည့်သွင်းလိုက်ပါပြီ။")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {e}")
+
+@bot.message_handler(commands=['rmsudo'])
+def cmd_rmsudo(message):
+    if not is_owner(message.from_user.id):
+        return bot.reply_to(message, "❌ ဤ Command ကို Owner သာ သုံးနိုင်ပါသည်။")
+    target_id = None
+    if message.reply_to_message:
+        target_id = message.reply_to_message.from_user.id
+    else:
+        parts = message.text.split()
+        if len(parts) > 1 and parts[1].isdigit():
+            target_id = int(parts[1])
+            
+    if not target_id:
+        return bot.reply_to(message, "⚠️ သုံးနည်း: `/rmsudo [User ID]` သို့မဟုတ် User ၏ စာကို Reply ပြန်ပါ။")
+        
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM sudo_users WHERE user_id = %s', (target_id,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        bot.reply_to(message, f"🗑 User `{target_id}` အား Sudo List မှ ဖြုတ်လိုက်ပါပြီ။")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {e}")
 
 # BAN / UNBAN / KICK
 @bot.message_handler(commands=['ban'])
@@ -278,7 +331,7 @@ def cmd_unmute(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}")
 
-# PIN / UNPIN
+# PIN / UNPIN (ERROR HANDLED)
 @bot.message_handler(commands=['pin'])
 def cmd_pin(message):
     if not is_authorized(message.from_user.id):
@@ -289,7 +342,7 @@ def cmd_pin(message):
         bot.pin_chat_message(message.chat.id, message.reply_to_message.message_id)
         bot.reply_to(message, "📌 Message ကို Pin ထိန်းလိုက်ပါပြီ။")
     except Exception as e:
-        bot.reply_to(message, f"❌ Error: {e}")
+        bot.reply_to(message, f"❌ Pin မလုပ်နိုင်ပါ: {e}")
 
 @bot.message_handler(commands=['unpin'])
 def cmd_unpin(message):
@@ -298,6 +351,118 @@ def cmd_unpin(message):
     try:
         bot.unpin_chat_message(message.chat.id)
         bot.reply_to(message, "📌 Pin ဖြုတ်လိုက်ပါပြီ။")
+    except Exception:
+        bot.reply_to(message, "⚠️ Unpin လုပ်စရာ Pinned Message မရှိပါ သို့မဟုတ် Error တက်နေပါသည်။")
+
+# BADWORDS SYSTEM
+@bot.message_handler(commands=['addbad'])
+def cmd_addbad(message):
+    if not is_authorized(message.from_user.id):
+        return bot.reply_to(message, "❌ ခွင့်ပြုချက်မရှိပါ။")
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        return bot.reply_to(message, "⚠️ သုံးနည်း: `/addbad [မကောင်းသောစာလုံး]`")
+    word = parts[1].lower().strip()
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('INSERT INTO badwords (chat_id, word) VALUES (%s, %s) ON CONFLICT DO NOTHING', (message.chat.id, word))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        bot.reply_to(message, f"🚫 Badword **{word}** အား ထည့်သွင်းလိုက်ပါပြီ။")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {e}")
+
+@bot.message_handler(commands=['rmbad'])
+def cmd_rmbad(message):
+    if not is_authorized(message.from_user.id):
+        return bot.reply_to(message, "❌ ခွင့်ပြုချက်မရှိပါ။")
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        return bot.reply_to(message, "⚠️ သုံးနည်း: `/rmbad [စာလုံး]`")
+    word = parts[1].lower().strip()
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM badwords WHERE chat_id = %s AND word = %s', (message.chat.id, word))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        bot.reply_to(message, f"🗑 Badword **{word}** အား ဖြုတ်လိုက်ပါပြီ။")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {e}")
+
+@bot.message_handler(commands=['badwords'])
+def cmd_badwords(message):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT word FROM badwords WHERE chat_id = %s', (message.chat.id,))
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        if rows:
+            words_list = "\n".join([f"• `{r[0]}`" for r in rows])
+            bot.reply_to(message, f"🚫 **Group ထဲမှ Badwords စာရင်း:**\n\n{words_list}")
+        else:
+            bot.reply_to(message, "ℹ️ Badwords စာရင်း မရှိသေးပါ။")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {e}")
+
+# FILTERS SYSTEM
+@bot.message_handler(commands=['filter'])
+def cmd_filter(message):
+    if not is_authorized(message.from_user.id):
+        return bot.reply_to(message, "❌ ခွင့်ပြုချက်မရှိပါ။")
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3:
+        return bot.reply_to(message, "⚠️ သုံးနည်း: `/filter [keyword] [reply text]`")
+    kw, reply_text = parts[1].lower().strip(), parts[2]
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('INSERT INTO filters (chat_id, keyword, reply_text) VALUES (%s, %s, %s) ON CONFLICT (chat_id, keyword) DO UPDATE SET reply_text = EXCLUDED.reply_text', (message.chat.id, kw, reply_text))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        bot.reply_to(message, f"🎯 Filter **{kw}** အား ထည့်သွင်းလိုက်ပါပြီ။")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {e}")
+
+@bot.message_handler(commands=['stop'])
+def cmd_stop_filter(message):
+    if not is_authorized(message.from_user.id):
+        return bot.reply_to(message, "❌ ခွင့်ပြုချက်မရှိပါ။")
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        return bot.reply_to(message, "⚠️ သုံးနည်း: `/stop [keyword]`")
+    kw = parts[1].lower().strip()
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM filters WHERE chat_id = %s AND keyword = %s', (message.chat.id, kw))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        bot.reply_to(message, f"🗑 Filter **{kw}** အား ဖျက်လိုက်ပါပြီ။")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {e}")
+
+@bot.message_handler(commands=['filters'])
+def cmd_filters(message):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT keyword FROM filters WHERE chat_id = %s', (message.chat.id,))
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        if rows:
+            kw_list = "\n".join([f"• `{r[0]}`" for r in rows])
+            bot.reply_to(message, f"🎯 **Group ထဲမှ Filters စာရင်း:**\n\n{kw_list}")
+        else:
+            bot.reply_to(message, "ℹ️ Filters စာရင်း မရှိသေးပါ။")
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}")
 
@@ -311,10 +476,7 @@ def cmd_save_note(message):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO notes (chat_id, note_name, content) VALUES (%s, %s, %s)
-            ON CONFLICT (chat_id, note_name) DO UPDATE SET content = EXCLUDED.content
-        ''', (message.chat.id, note_name, content))
+        cursor.execute('INSERT INTO notes (chat_id, note_name, content) VALUES (%s, %s, %s) ON CONFLICT (chat_id, note_name) DO UPDATE SET content = EXCLUDED.content', (message.chat.id, note_name, content))
         conn.commit()
         cursor.close()
         conn.close()
@@ -373,11 +535,7 @@ def cmd_warn(message):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO warns (chat_id, user_id, count) VALUES (%s, %s, 1)
-            ON CONFLICT (chat_id, user_id) DO UPDATE SET count = warns.count + 1
-            RETURNING count
-        ''', (message.chat.id, target_id))
+        cursor.execute('INSERT INTO warns (chat_id, user_id, count) VALUES (%s, %s, 1) ON CONFLICT (chat_id, user_id) DO UPDATE SET count = warns.count + 1 RETURNING count', (message.chat.id, target_id))
         count = cursor.fetchone()[0]
         conn.commit()
         cursor.close()
@@ -385,9 +543,64 @@ def cmd_warn(message):
 
         if count >= 3:
             bot.ban_chat_member(message.chat.id, target_id)
-            bot.reply_to(message, f"🚫 [{target_name}](tg://user?id={target_id}) သည် Warn ၃ ကြိမ် ပြည့်သွားသဖြင့် Group မှ Ban ခံလိုက်ရပါပြီ။")
+            bot.reply_to(message, f"🚫 [{target_name}](tg://user?id={target_id}) သည် Warn ၃ ကြိမ် ပြည့်သွားသဖြင့် Group မှ Ban ขံလိုက်ရပါပြီ။")
         else:
             bot.reply_to(message, f"⚠️ [{target_name}](tg://user?id={target_id}) အား သတိပေးလိုက်ပါပြီ။\nလက်ရှိ Warn: `{count}/3`")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {e}")
+
+@bot.message_handler(commands=['rmwarn'])
+def cmd_rmwarn(message):
+    if not is_authorized(message.from_user.id):
+        return bot.reply_to(message, "❌ ခွင့်ပြုချက်မရှိပါ။")
+    if not message.reply_to_message:
+        return bot.reply_to(message, "⚠️ Warn လျှော့ချင်သောသူ၏ Message ကို Reply ပြန်ပေးပါ။")
+    target_id = message.reply_to_message.from_user.id
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('UPDATE warns SET count = GREATEST(0, count - 1) WHERE chat_id = %s AND user_id = %s RETURNING count', (message.chat.id, target_id))
+        row = cursor.fetchone()
+        conn.commit()
+        cursor.close()
+        conn.close()
+        c = row[0] if row else 0
+        bot.reply_to(message, f"✅ Warn ၁ ကြိမ် လျှော့ပေးလိုက်ပါပြီ။ လက်ရှိ Warn: `{c}/3`")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {e}")
+
+@bot.message_handler(commands=['warns'])
+def cmd_warns(message):
+    target = message.reply_to_message.from_user if message.reply_to_message else message.from_user
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT count FROM warns WHERE chat_id = %s AND user_id = %s', (message.chat.id, target.id))
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        c = row[0] if row else 0
+        bot.reply_to(message, f"⚠️ [{target.first_name}](tg://user?id={target.id}) ၏ Warn အရေအတွက်: `{c}/3`")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {e}")
+
+# WELCOME SETTING
+@bot.message_handler(commands=['setwelcome'])
+def cmd_setwelcome(message):
+    if not is_authorized(message.from_user.id):
+        return bot.reply_to(message, "❌ ခွင့်ပြုချက်မရှိပါ။")
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        return bot.reply_to(message, "⚠️ သုံးနည်း: `/setwelcome [ကြိုဆိုစာ]`")
+    msg = parts[1]
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('INSERT INTO welcomes (chat_id, custom_message) VALUES (%s, %s) ON CONFLICT (chat_id) DO UPDATE SET custom_message = EXCLUDED.custom_message', (message.chat.id, msg))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        bot.reply_to(message, "👋 Welcome Message အသစ် ပြောင်းလဲလိုက်ပါပြီ။")
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}")
 
@@ -429,7 +642,56 @@ def cmd_broadcast(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Broadcast Error: {e}")
 
-# TAG ALL & ADMINS
+# MENTION ALL / ADMINS
+def thread_mention_all(chat_id, text_to_send):
+    mention_cancel_flags[chat_id] = False
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT user_id, first_name FROM users')
+        users = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        if not users:
+            bot.send_message(chat_id, "ℹ️ Database ထဲတွင် Member စာရင်း မရှိသေးပါ။")
+            return
+
+        bot.send_message(chat_id, f"📢 စုစုပေါင်း Member (`{len(users)}`) ယောက်အား Mention ခေါ်ယူခြင်း စတင်ပါပြီ...")
+
+        chunk_size = 5
+        for i in range(0, len(users), chunk_size):
+            if mention_cancel_flags.get(chat_id, False):
+                bot.send_message(chat_id, "🛑 Mention ခေါ်ယူခြင်းကို ရပ်တန့်လိုက်ပါပြီ။")
+                break
+
+            chunk = users[i:i + chunk_size]
+            mentions = [f"[{u[1]}](tg://user?id={u[0]})" for u in chunk]
+            msg = f"📢 **{text_to_send}**\n\n" + " ".join(mentions)
+            
+            try:
+                bot.send_message(chat_id, msg)
+            except Exception:
+                pass
+            time.sleep(2.5)
+    except Exception as e:
+        bot.send_message(chat_id, f"❌ Mention Error: {e}")
+
+@bot.message_handler(commands=['all', 'tagall'])
+def cmd_tag_all(message):
+    if not is_authorized(message.from_user.id):
+        return bot.reply_to(message, "❌ ခွင့်ပြုချက်မရှိပါ။")
+    parts = message.text.split(maxsplit=1)
+    text_to_send = parts[1] if len(parts) > 1 else "အဖွဲ့ဝင်များအားလုံး သတိထားရန်!"
+    threading.Thread(target=thread_mention_all, args=(message.chat.id, text_to_send)).start()
+
+@bot.message_handler(commands=['cancelmention', 'stopmention'])
+def cmd_cancel_mention(message):
+    if not is_authorized(message.from_user.id):
+        return bot.reply_to(message, "❌ ခွင့်ပြုချက်မရှိပါ။")
+    mention_cancel_flags[message.chat.id] = True
+    bot.reply_to(message, "🛑 Mention ခေါ်ခြင်းကို ရပ်တန့်ရန် အချက်ပြလိုက်ပါပြီ။")
+
 @bot.message_handler(commands=['admins', 'admin'])
 def cmd_tag_admins(message):
     if message.chat.type not in ['group', 'supergroup']:
@@ -445,15 +707,27 @@ def cmd_tag_admins(message):
         bot.reply_to(message, f"❌ Error: {e}")
 
 # ==========================================
-# ALL MESSAGES HANDLER (NOTES & WELCOME & SAVE)
+# ALL MESSAGES HANDLER (BADWORDS / FILTERS / WELCOME)
 # ==========================================
 @bot.message_handler(func=lambda message: True, content_types=['text', 'photo', 'video', 'document', 'animation', 'new_chat_members'])
 def handle_all_messages(message):
     # Welcome New Members
     if message.content_type == 'new_chat_members':
-        for member in message.new_chat_members:
-            if not member.is_bot:
-                bot.send_message(message.chat.id, f"👋 မင်္ဂလာပါ [{member.first_name}](tg://user?id={member.id}) ၊ Group မှ နွေးထွေးစွာ ကြိုဆိုပါတယ်။")
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT custom_message FROM welcomes WHERE chat_id = %s', (message.chat.id,))
+            row = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            
+            custom_msg = row[0] if row else "👋 မင်္ဂလာပါ {name} ၊ Group မှ နွေးထွေးစွာ ကြိုဆိုပါတယ်။"
+            for member in message.new_chat_members:
+                if not member.is_bot:
+                    welcome_text = custom_msg.replace("{name}", f"[{member.first_name}](tg://user?id={member.id})")
+                    bot.send_message(message.chat.id, welcome_text)
+        except Exception:
+            pass
         return
 
     text = message.text or message.caption or ""
@@ -462,7 +736,41 @@ def handle_all_messages(message):
         save_user(message.from_user)
     elif message.chat.type in ['group', 'supergroup']:
         save_group(message.chat.id, message.chat.title, message.from_user.id, message.from_user.first_name)
-        
+        save_user(message.from_user)
+
+        # Check Badwords
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT word FROM badwords WHERE chat_id = %s', (message.chat.id,))
+            badwords = cursor.fetchall()
+            cursor.close()
+            conn.close()
+            
+            for bw in badwords:
+                if bw[0] in text.lower():
+                    bot.delete_message(message.chat.id, message.message_id)
+                    bot.send_message(message.chat.id, f"⚠️ [{message.from_user.first_name}](tg://user?id={message.from_user.id}) ၊ မကောင်းသော စာလုံးများ သုံးစွဲခွင့် မရှိပါ။")
+                    return
+        except Exception:
+            pass
+
+        # Check Filters
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT keyword, reply_text FROM filters WHERE chat_id = %s', (message.chat.id,))
+            filters = cursor.fetchall()
+            cursor.close()
+            conn.close()
+            
+            for kw, rep in filters:
+                if kw in text.lower():
+                    bot.reply_to(message, rep)
+                    return
+        except Exception:
+            pass
+
         # Check Note Hashtag (#notename)
         if text.startswith("#"):
             note_name = text[1:].split()[0].lower()
@@ -477,6 +785,12 @@ def handle_all_messages(message):
                     bot.reply_to(message, row[0])
             except Exception:
                 pass
+
+        # Shortcut Mentions
+        if text.strip() == "@all" and is_authorized(message.from_user.id):
+            threading.Thread(target=thread_mention_all, args=(message.chat.id, "အဖွဲ့ဝင်များအားလုံး သတိထားရန်!")).start()
+        elif text.strip() == "@admins":
+            cmd_tag_admins(message)
 
 # ==========================================
 # START BOT
