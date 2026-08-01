@@ -1,8 +1,15 @@
+import asyncio
+# Python 3.10+ / 3.14+ MainThread Event Loop Fix for Pyrogram
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
 import os
 import re
 import time
 import threading
-import asyncio
 import platform
 import psutil
 import psycopg2
