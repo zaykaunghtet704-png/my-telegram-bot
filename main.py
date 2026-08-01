@@ -203,7 +203,7 @@ def send_welcome(message):
 
 @bot.message_handler(commands=['status'])
 def cmd_status(message):
-    bot.reply_to(message, "✅ **Bot status: Online (မင်္ဂလာပါ အလုပ်လုပ်နေပါသည်)**", parse_mode="Markdown")
+    bot.reply_to(message, "✅ **Bot status:** Online (မအိပ်ဘဲ အလုပ်လုပ်နေပါသည်)", parse_mode="Markdown")
 
 @bot.message_handler(commands=['addsudo'])
 def cmd_add_sudo(message):
@@ -280,7 +280,7 @@ def cmd_list_sudo(message):
     bot.reply_to(message, f"🔑 **ခွင့်ပြုချက် ရရှိထားသော Sudo Users များ စာရင်း:**\n\n{sudo_list}", parse_mode="Markdown")
 
 # ==========================================
-# MODERATION COMMANDS
+# MODERATION COMMANDS (FIXED SAFE HANDLERS)
 # ==========================================
 @bot.message_handler(commands=['pin'])
 def cmd_pin(message):
@@ -294,18 +294,29 @@ def cmd_pin(message):
         bot.pin_chat_message(message.chat.id, message.reply_to_message.message_id)
         bot.reply_to(message, "📌 Message ကို Pin ထိုးလိုက်ပါပြီ။")
     except Exception as e:
-        bot.reply_to(message, f"❌ Pin ထိုးမရပါ: Bot Admin Permission စစ်ပေးပါ။ ({e})")
+        bot.reply_to(message, "❌ Pin ထိုးမရပါ။ Bot တွင် Group Admin Power (Pin Messages) ရှိမရှိ စစ်ပေးပါ။")
 
 @bot.message_handler(commands=['unpin'])
 def cmd_unpin(message):
     if not is_authorized(message.from_user.id):
         bot.reply_to(message, "❌ ဤ Command ကို **Authorized User** များသာ သုံးနိုင်ပါသည်။")
         return
+    
     try:
-        bot.unpin_chat_message(message.chat.id)
-        bot.reply_to(message, "📌 Pin ဖြုတ်လိုက်ပါပြီ။")
+        if message.reply_to_message:
+            bot.unpin_chat_message(message.chat.id, message.reply_to_message.message_id)
+            bot.reply_to(message, "📌 Reply လုပ်ထားသော Message အား Unpin ဖြုတ်လိုက်ပါပြီ။")
+        else:
+            bot.unpin_chat_message(message.chat.id)
+            bot.reply_to(message, "📌 Pin ထိုးထားသော စာအား Unpin ဖြုတ်လိုက်ပါပြီ။")
     except Exception as e:
-        bot.reply_to(message, f"❌ Error: {e}")
+        err_msg = str(e)
+        if "message to unpin not found" in err_msg:
+            bot.reply_to(message, "⚠️ Group ထဲတွင် Unpin ဖြုတ်စရာ Pin ထိုးထားသော Message မရှိပါ။")
+        elif "not enough rights" in err_msg or "CHAT_ADMIN_REQUIRED" in err_msg:
+            bot.reply_to(message, "❌ Bot တွင် Message များ Unpin ဖြုတ်ရန် Admin Power မရှိပါ။")
+        else:
+            bot.reply_to(message, f"⚠️ သတိပေးချက်: Unpin ဖြုတ်မရပါ။ ({err_msg})")
 
 @bot.message_handler(commands=['mute'])
 def cmd_mute(message):
@@ -352,6 +363,40 @@ def cmd_ban(message):
         bot.reply_to(message, f"🚫 [{message.reply_to_message.from_user.first_name}](tg://user?id={message.reply_to_message.from_user.id}) အား Group မှ Ban လိုက်ပါပြီ။", parse_mode="Markdown")
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}")
+
+@bot.message_handler(commands=['warn'])
+def cmd_warn(message):
+    if not is_authorized(message.from_user.id):
+        bot.reply_to(message, "❌ ဤ Command ကို **Authorized User** များသာ သုံးနိုင်ပါသည်။")
+        return
+    if not message.reply_to_message:
+        bot.reply_to(message, "⚠️ သတိပေးချင်သော သူ၏ Message ကို Reply ပြုလုပ်၍ အသုံးပြုပါ။")
+        return
+    
+    target_user = message.reply_to_message.from_user
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT count FROM warns WHERE chat_id = %s AND user_id = %s', (message.chat.id, target_user.id))
+    row = cursor.fetchone()
+    
+    count = (row[0] + 1) if row else 1
+    cursor.execute('''
+        INSERT INTO warns (chat_id, user_id, count)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (chat_id, user_id) DO UPDATE SET count = EXCLUDED.count
+    ''', (message.chat.id, target_user.id, count))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    if count >= 3:
+        try:
+            bot.ban_chat_member(message.chat.id, target_user.id)
+            bot.reply_to(message, f"🚫 [{target_user.first_name}](tg://user?id={target_user.id}) သည် Warning (၃) ကြိမ် ပြည့်သွားသဖြင့် Group မှ Ban လိုက်ပါပြီ။", parse_mode="Markdown")
+        except Exception as e:
+            bot.reply_to(message, f"⚠️ [{target_user.first_name}](tg://user?id={target_user.id}) တွင် Warning (၃) ကြိမ် ပြည့်သွားသော်လည်း Ban မရပါ: {e}", parse_mode="Markdown")
+    else:
+        bot.reply_to(message, f"⚠️ [{target_user.first_name}](tg://user?id={target_user.id}) အား Warning ပေးလိုက်ပါပြီ။ ({count}/3)", parse_mode="Markdown")
 
 @bot.message_handler(commands=['broadcast'])
 def cmd_broadcast(message):
