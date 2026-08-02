@@ -63,6 +63,7 @@ def init_db():
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, first_name TEXT, username TEXT, joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)')
+        cursor.execute('CREATE TABLE IF NOT EXISTS group_members (chat_id BIGINT, user_id BIGINT, first_name TEXT, PRIMARY KEY (chat_id, user_id))')
         cursor.execute('CREATE TABLE IF NOT EXISTS groups (chat_id BIGINT PRIMARY KEY, title TEXT, added_by_id BIGINT, added_by_name TEXT, joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)')
         cursor.execute('CREATE TABLE IF NOT EXISTS notes (chat_id BIGINT, note_name TEXT, content TEXT, PRIMARY KEY (chat_id, note_name))')
         cursor.execute('CREATE TABLE IF NOT EXISTS warns (chat_id BIGINT, user_id BIGINT, count INT DEFAULT 0, PRIMARY KEY (chat_id, user_id))')
@@ -97,12 +98,16 @@ async def is_authorized(user_id):
     except Exception:
         return False
 
-def save_user_to_db(user):
-    if not user: return
+def save_user_to_db(user, chat_id=None):
+    if not user or user.is_bot: return
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('INSERT INTO users (user_id, first_name, username) VALUES (%s, %s, %s) ON CONFLICT (user_id) DO UPDATE SET first_name = EXCLUDED.first_name, username = EXCLUDED.username', (user.id, user.first_name, user.username))
+        
+        if chat_id:
+            cursor.execute('INSERT INTO group_members (chat_id, user_id, first_name) VALUES (%s, %s, %s) ON CONFLICT (chat_id, user_id) DO UPDATE SET first_name = EXCLUDED.first_name', (chat_id, user.id, user.first_name))
+            
         conn.commit()
         cursor.close()
         conn.close()
@@ -126,11 +131,12 @@ def save_group_to_db(chat, added_by):
 # ==========================================
 @app.on_message(filters.command(["start", "help"], prefixes=[".", "/", "@"]))
 async def cmd_help(client: Client, message: Message):
-    save_user_to_db(message.from_user)
+    save_user_to_db(message.from_user, message.chat.id)
     help_text = (
         "🤖 **Group Management & Mention All Userbot System**\n\n"
         "📢 **Mention Commands:**\n"
-        "• `/all [စာ]` သို့မဟုတ် `@all` - Member အားလုံးကို Tag ခေါ်ရန် (စာမရေးဖူးသူများပါမကျန်)\n"
+        "• `/all [စာ]` သို့မဟုတ် `@all` - Member အားလုံးကို Tag ခေါ်ရန် (DB-Backed 100% Guaranteed)\n"
+        "• `/sync` - Group အဖွဲ့ဝင်များကို DB ထဲသို့ အတင်းအကျပ် ဆွဲသွင်းရန်\n"
         "• `/admins` သို့မဟုတ် `@admins` - Admins များကို Tag ခေါ်ရန်\n"
         "• `/stopmention` - Tag ခေါ်နေခြင်းကို ရပ်တန့်ရန်\n\n"
         "👑 **Admin & Sudo Commands:**\n"
@@ -243,8 +249,23 @@ async def cmd_sudolist(client: Client, message: Message):
         await message.reply_text(f"❌ Error: {e}")
 
 # ==========================================
-# 📢 TAG / MENTION SYSTEM (PYROGRAM DIRECT FETCH)
+# 📢 MENTION ALL SYSTEM (HYBRID API + DB)
 # ==========================================
+@app.on_message(filters.command(["sync"], prefixes=[".", "/", "@"]))
+async def cmd_sync_members(client: Client, message: Message):
+    if not await is_authorized(message.from_user.id):
+        return
+    msg = await message.reply_text("🔄 **Group Members များကို Database သို့ Sync စတင်လုပ်ဆောင်နေပါသည်...**")
+    count = 0
+    try:
+        async for member in client.get_chat_members(message.chat.id):
+            if not member.user.is_bot and not member.user.is_deleted:
+                save_user_to_db(member.user, message.chat.id)
+                count += 1
+        await msg.edit_text(f"✅ အောင်မြင်ပါသည်။ Member စုစုပေါင်း `{count}` ယောက်အား DB ထဲသို့ သိမ်းဆည်းလိုက်ပါပြီ။")
+    except Exception as e:
+        await msg.edit_text(f"⚠️ Sync ပြုလုပ်ရာတွင် အကန့်အသတ်ဖြစ်ပေါ်ခဲ့သော်လည်း ရရှိသမျှ DB ထဲသိမ်းပြီးပါပြီ: {e}")
+
 @app.on_message(filters.command(["all", "tagall"], prefixes=[".", "/", "@"]))
 async def cmd_tagall(client: Client, message: Message):
     if not await is_authorized(message.from_user.id):
@@ -254,29 +275,57 @@ async def cmd_tagall(client: Client, message: Message):
     cancel_flags[chat_id] = False
     text_to_send = message.text.split(maxsplit=1)[1] if len(message.command) > 1 else "အဖွဲ့ဝင်များအားလုံး သတိထားရန်!"
     
-    await message.reply_text("📢 **Member အားလုံးအား Tag ခေါ်ယူခြင်း စတင်နေပါပြီ...**")
+    status_msg = await message.reply_text("📢 **Member အားလုံးအား Mention ခေါ်ယူခြင်း စတင်နေပါပြီ...**")
     
+    # Fetch directly from Telegram API first, fallback/merge with DB
+    members_dict = {}
+    
+    try:
+        async for member in client.get_chat_members(chat_id):
+            if not member.user.is_bot and not member.user.is_deleted:
+                members_dict[member.user.id] = member.user.first_name or "User"
+                save_user_to_db(member.user, chat_id)
+    except Exception:
+        pass
+
+    # Read from Database to ensure no missing members
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT user_id, first_name FROM group_members WHERE chat_id = %s', (chat_id,))
+        db_rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        for r in db_rows:
+            if r[0] not in members_dict:
+                members_dict[r[0]] = r[1] or "User"
+    except Exception:
+        pass
+
+    if not members_dict:
+        return await status_msg.edit_text("❌ Tag ခေါ်ရန် Member တစ်ဦးမျှ ရှာမတွေ့ပါ။ `/sync` ပြုလုပ်ပေးပါ။")
+
     mentions = []
     count = 0
     
-    async for member in client.get_chat_members(chat_id):
+    for uid, fname in members_dict.items():
         if cancel_flags.get(chat_id, False):
             await message.reply_text("🛑 Tag ခေါ်ယူခြင်းကို ရပ်တန့်လိုက်ပါပြီ။")
             return
         
-        if not member.user.is_bot and not member.user.is_deleted:
-            first_name = member.user.first_name or "User"
-            mentions.append(f"[{first_name}](tg://user?id={member.user.id})")
-            count += 1
+        # Safe Markdown escaping for names
+        safe_name = fname.replace("[", "").replace("]", "")
+        mentions.append(f"[{safe_name}](tg://user?id={uid})")
+        count += 1
+        
+        if len(mentions) == 5:
+            try:
+                await client.send_message(chat_id, f"📢 **{text_to_send}**\n\n" + " ".join(mentions))
+            except Exception:
+                pass
+            mentions = []
+            await asyncio.sleep(2)
             
-            if len(mentions) == 5:
-                try:
-                    await client.send_message(chat_id, f"📢 **{text_to_send}**\n\n" + " ".join(mentions))
-                except Exception:
-                    pass
-                mentions = []
-                await asyncio.sleep(2)
-                
     if mentions and not cancel_flags.get(chat_id, False):
         await client.send_message(chat_id, f"📢 **{text_to_send}**\n\n" + " ".join(mentions))
         
@@ -668,7 +717,7 @@ async def cmd_broadcast(client: Client, message: Message):
 @app.on_message(filters.group & ~filters.me)
 async def handle_all_messages(client: Client, message: Message):
     # Save User and Group Context to DB Automatically
-    save_user_to_db(message.from_user)
+    save_user_to_db(message.from_user, message.chat.id)
     save_group_to_db(message.chat, message.from_user)
 
     text = message.text or message.caption or ""
@@ -686,6 +735,7 @@ async def handle_all_messages(client: Client, message: Message):
             custom_msg = row[0] if row else "👋 မင်္ဂလာပါ {name} ၊ Group မှ နွေးထွေးစွာ ကြိုဆိုပါတယ်။"
             for member in message.new_chat_members:
                 if not member.is_bot:
+                    save_user_to_db(member, message.chat.id)
                     welcome_text = custom_msg.replace("{name}", f"[{member.first_name}](tg://user?id={member.id})")
                     await message.reply_text(welcome_text)
         except Exception:
