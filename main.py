@@ -32,7 +32,6 @@ class Database:
         self.create_tables()
 
     def create_tables(self):
-        # Settings Table
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             chat_id INTEGER PRIMARY KEY,
@@ -44,33 +43,27 @@ class Database:
             disabled_reports INTEGER DEFAULT 0
         )
         """)
-        # Group Registration Table
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS groups (
             chat_id INTEGER PRIMARY KEY,
             chat_title TEXT
         )
         """)
-        # Persistent Sudo Users Table
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS sudos (
             user_id INTEGER PRIMARY KEY
         )
         """)
-        # Filters, Notes, Badwords, Blocklists
         self.cursor.execute("CREATE TABLE IF NOT EXISTS filters (chat_id INTEGER, keyword TEXT, reply_text TEXT, PRIMARY KEY (chat_id, keyword))")
         self.cursor.execute("CREATE TABLE IF NOT EXISTS notes (chat_id INTEGER, note_name TEXT, content TEXT, PRIMARY KEY (chat_id, note_name))")
         self.cursor.execute("CREATE TABLE IF NOT EXISTS badwords (chat_id INTEGER, word TEXT, PRIMARY KEY (chat_id, word))")
         self.cursor.execute("CREATE TABLE IF NOT EXISTS blocklists (chat_id INTEGER, item TEXT, PRIMARY KEY (chat_id, item))")
-        
-        # Moderation Tables
         self.cursor.execute("CREATE TABLE IF NOT EXISTS approved (chat_id INTEGER, user_id INTEGER, PRIMARY KEY (chat_id, user_id))")
         self.cursor.execute("CREATE TABLE IF NOT EXISTS warns (chat_id INTEGER, user_id INTEGER, count INTEGER DEFAULT 0, PRIMARY KEY (chat_id, user_id))")
         self.cursor.execute("CREATE TABLE IF NOT EXISTS locks (chat_id INTEGER, lock_type TEXT, PRIMARY KEY (chat_id, lock_type))")
         self.cursor.execute("CREATE TABLE IF NOT EXISTS disabled_cmds (chat_id INTEGER, command TEXT, PRIMARY KEY (chat_id, command))")
         self.conn.commit()
 
-    # Sudo Management
     def add_sudo(self, user_id):
         self.cursor.execute("INSERT OR IGNORE INTO sudos (user_id) VALUES (?)", (user_id,))
         self.conn.commit()
@@ -83,7 +76,6 @@ class Database:
         self.cursor.execute("SELECT user_id FROM sudos")
         return [r[0] for r in self.cursor.fetchall()]
 
-    # Group Management
     def add_group(self, chat_id, title):
         self.cursor.execute("INSERT OR REPLACE INTO groups (chat_id, chat_title) VALUES (?, ?)", (chat_id, title))
         self.conn.commit()
@@ -92,7 +84,6 @@ class Database:
         self.cursor.execute("SELECT chat_id FROM groups")
         return [r[0] for r in self.cursor.fetchall()]
 
-    # Settings Dynamic Getter/Setter
     def set_setting(self, chat_id, column, value):
         allowed_cols = ["welcome_text", "goodbye_text", "rules_text", "flood_limit", "antiraid", "disabled_reports"]
         if column in allowed_cols:
@@ -107,7 +98,6 @@ class Database:
         res = self.cursor.fetchone()
         return res[0] if res and res[0] is not None else default
 
-    # Key-Value Helpers
     def add_item(self, table, chat_id, key_col, val_col, key_val, val_val=None):
         if val_col:
             self.cursor.execute(f"INSERT OR REPLACE INTO {table} (chat_id, {key_col}, {val_col}) VALUES (?, ?, ?)", (chat_id, key_val, val_val))
@@ -139,7 +129,7 @@ bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
 user_flood_tracker = {}
 
 # ==========================================
-# 🔗 4. BUTTON LINK PARSER FUNCTION
+# 🔗 4. BUTTON LINK PARSER
 # ==========================================
 def parse_button_links(text):
     if not text:
@@ -190,6 +180,15 @@ def is_admin(chat_id, user_id):
     except Exception:
         return False
 
+# Middleware to check if command is disabled in chat
+def is_command_disabled(message, cmd):
+    if message.chat.type in ['group', 'supergroup']:
+        disabled_list = db.get_items("disabled_cmds", message.chat.id, "command")
+        if cmd.lower() in disabled_list and not is_admin(message.chat.id, message.from_user.id):
+            bot.reply_to(message, "❌ ဒီ Command အား Admin မှ ပိတ်ထားပါသည်။")
+            return True
+    return False
+
 # ==========================================
 # 🚀 6. COMMAND HANDLERS
 # ==========================================
@@ -198,6 +197,7 @@ def is_admin(chat_id, user_id):
 @bot.message_handler(commands=['admin', 'admins', 'addsudo', 'rmsudo', 'sudolist'])
 def module_admin(message):
     cmd = message.text.split()[0].replace('/', '').lower()
+    if is_command_disabled(message, cmd): return
 
     if cmd in ['addsudo', 'rmsudo', 'sudolist']:
         if message.from_user.id not in MASTER_OWNERS:
@@ -208,8 +208,15 @@ def module_admin(message):
             s_str = "\n".join([f"• `{s}`" for s in sudos])
             return bot.reply_to(message, f"👑 **Database Sudo Admins စာရင်း:**\n\n{s_str if s_str else 'Sudo မရှိသေးပါ'}")
 
+        target_id = None
         if message.reply_to_message:
             target_id = message.reply_to_message.from_user.id
+        else:
+            parts = message.text.split()
+            if len(parts) > 1 and parts[1].isdigit():
+                target_id = int(parts[1])
+
+        if target_id:
             if cmd == 'addsudo':
                 db.add_sudo(target_id)
                 bot.reply_to(message, f"👑 User `{target_id}` အား Sudo အဖြစ် သိမ်းဆည်းပြီးပါပြီ။")
@@ -217,17 +224,7 @@ def module_admin(message):
                 db.remove_sudo(target_id)
                 bot.reply_to(message, f"🗑️ User `{target_id}` အား Sudo စာရင်းမှ ဖယ်ထုတ်လိုက်ပါပြီ။")
         else:
-            parts = message.text.split()
-            if len(parts) > 1 and parts[1].isdigit():
-                target_id = int(parts[1])
-                if cmd == 'addsudo':
-                    db.add_sudo(target_id)
-                    bot.reply_to(message, f"👑 User `{target_id}` အား Sudo အဖြစ် သိမ်းဆည်းပြီးပါပြီ။")
-                elif cmd == 'rmsudo':
-                    db.remove_sudo(target_id)
-                    bot.reply_to(message, f"🗑️ User `{target_id}` အား Sudo မှ ဖယ်ထုတ်လိုက်ပါပြီ။")
-            else:
-                bot.reply_to(message, "⚠️ **Usage:** User စာကို Reply ပြန်၍ `/addsudo` သို့မဟုတ် `/addsudo <User_ID>` ရိုက်ပါ။")
+            bot.reply_to(message, "⚠️ **Usage:** User စာကို Reply ပြန်၍ `/addsudo` သို့မဟုတ် `/addsudo <User_ID>` ရိုက်ပါ။")
         return
 
     if message.chat.type == 'private':
@@ -243,6 +240,7 @@ def module_admin(message):
 # 2. Antiflood
 @bot.message_handler(commands=['setflood', 'flood'])
 def module_antiflood(message):
+    if is_command_disabled(message, "setflood"): return
     if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat တွင်သာ အလုပ်လုပ်ပါသည်။")
     if not is_admin(message.chat.id, message.from_user.id): return
     
@@ -258,6 +256,7 @@ def module_antiflood(message):
 # 3. Antiraid
 @bot.message_handler(commands=['antiraid'])
 def module_antiraid(message):
+    if is_command_disabled(message, "antiraid"): return
     if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat တွင်သာ အလုပ်လုပ်ပါသည်။")
     if not is_admin(message.chat.id, message.from_user.id): return
     
@@ -269,11 +268,13 @@ def module_antiraid(message):
 # 4. Approval System
 @bot.message_handler(commands=['approve', 'unapprove', 'approved'])
 def module_approval(message):
+    cmd = message.text.split()[0].replace('/', '').lower()
+    if is_command_disabled(message, cmd): return
     if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat တွင်သာ အလုပ်လုပ်ပါသည်။")
     if not is_admin(message.chat.id, message.from_user.id): return
     chat_id = message.chat.id
 
-    if 'approved' in message.text:
+    if cmd == 'approved':
         users = db.get_items("approved", chat_id, "user_id")
         u_str = "\n".join([f"• `{u}`" for u in users])
         bot.reply_to(message, f"✅ **Approved Members စာရင်း:**\n{u_str if u_str else 'မရှိပါ'}")
@@ -283,7 +284,7 @@ def module_approval(message):
         return bot.reply_to(message, "⚠️ User Message အား Reply ပြန်၍ အသုံးပြုပါ။")
 
     uid = message.reply_to_message.from_user.id
-    if 'unapprove' in message.text:
+    if cmd == 'unapprove':
         db.remove_item("approved", chat_id, "user_id", uid)
         bot.reply_to(message, f"❌ User `{uid}` အား Approved စာရင်းမှ ဖယ်လိုက်ပါပြီ။")
     else:
@@ -293,15 +294,15 @@ def module_approval(message):
 # 5. Bans & Moderation
 @bot.message_handler(commands=['ban', 'unban', 'mute', 'unmute', 'kick'])
 def module_bans(message):
-    if message.chat.type == 'private': 
-        return bot.reply_to(message, "⚠️ Group Chat ထဲတွင်သာ အသုံးပြုနိုင်ပါသည်။")
-    
+    cmd = message.text.split()[0].replace('/', '').lower()
+    if is_command_disabled(message, cmd): return
+    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat ထဲတွင်သာ အသုံးပြုနိုင်ပါသည်။")
     if not is_admin(message.chat.id, message.from_user.id): return
+    
     if not message.reply_to_message:
         return bot.reply_to(message, "⚠️ ပြုလုပ်လိုသော User ၏ စာကို Reply ပြန်ပါ။")
 
     uid = message.reply_to_message.from_user.id
-    cmd = message.text.split()[0].replace('/', '').lower()
 
     try:
         if cmd == 'ban':
@@ -326,10 +327,11 @@ def module_bans(message):
 # 6. Blocklists & Badwords
 @bot.message_handler(commands=['addbad', 'rmbad', 'addblock', 'rmblock', 'badwords', 'blocklist'])
 def module_blocklists_badwords(message):
+    cmd = message.text.split()[0].replace('/', '').lower()
+    if is_command_disabled(message, cmd): return
     if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat တွင်သာ အလုပ်လုပ်ပါသည်။")
     if not is_admin(message.chat.id, message.from_user.id): return
     chat_id = message.chat.id
-    cmd = message.text.split()[0].replace('/', '').lower()
 
     if cmd in ['badwords', 'blocklist']:
         tbl = "badwords" if cmd == 'badwords' else "blocklists"
@@ -381,10 +383,11 @@ def module_disabling(message):
 # 8. Filters & Notes
 @bot.message_handler(commands=['filter', 'stop', 'save', 'clear', 'notes', 'filters'])
 def module_filters_notes(message):
+    cmd = message.text.split()[0].replace('/', '').lower()
+    if is_command_disabled(message, cmd): return
     if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat တွင်သာ အလုပ်လုပ်ပါသည်။")
     if not is_admin(message.chat.id, message.from_user.id): return
     chat_id = message.chat.id
-    cmd = message.text.split()[0].replace('/', '').lower()
 
     if cmd == 'notes':
         notes = db.get_items("notes", chat_id, "note_name")
@@ -433,11 +436,12 @@ def module_formatting(message):
 # 10. Greetings
 @bot.message_handler(commands=['setwelcome', 'setgoodbye'])
 def module_greetings(message):
+    cmd = message.text.split()[0].replace('/', '').lower()
+    if is_command_disabled(message, cmd): return
     if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat တွင်သာ အလုပ်လုပ်ပါသည်။")
     if not is_admin(message.chat.id, message.from_user.id): return
     chat_id = message.chat.id
     parts = message.text.split(maxsplit=1)
-    cmd = parts[0].replace('/', '').lower()
 
     if len(parts) > 1:
         col = "welcome_text" if cmd == 'setwelcome' else "goodbye_text"
@@ -450,11 +454,13 @@ def module_greetings(message):
 # 11. Locks
 @bot.message_handler(commands=['lock', 'unlock', 'locks'])
 def module_locks(message):
+    cmd = message.text.split()[0].replace('/', '').lower()
+    if is_command_disabled(message, cmd): return
     if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat တွင်သာ အလုပ်လုပ်ပါသည်။")
     if not is_admin(message.chat.id, message.from_user.id): return
     chat_id = message.chat.id
 
-    if message.text == '/locks':
+    if cmd == 'locks':
         locks = db.get_items("locks", chat_id, "lock_type")
         l_str = ", ".join(locks)
         return bot.reply_to(message, f"🔒 **Locked Types:**\n{l_str if l_str else 'မရှိပါ'}")
@@ -474,6 +480,8 @@ def module_locks(message):
 # 12. Misc & ID
 @bot.message_handler(commands=['id', 'info'])
 def module_misc(message):
+    cmd = message.text.split()[0].replace('/', '').lower()
+    if is_command_disabled(message, cmd): return
     target = message.reply_to_message.from_user if message.reply_to_message else message.from_user
     info = (
         f"ℹ️ **User Information:**\n\n"
@@ -486,11 +494,13 @@ def module_misc(message):
 # 13. Pin
 @bot.message_handler(commands=['pin', 'unpin'])
 def module_pin(message):
+    cmd = message.text.split()[0].replace('/', '').lower()
+    if is_command_disabled(message, cmd): return
     if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat တွင်သာ အလုပ်လုပ်ပါသည်။")
     if not is_admin(message.chat.id, message.from_user.id): return
     if message.reply_to_message:
         try:
-            if 'unpin' in message.text:
+            if cmd == 'unpin':
                 bot.unpin_chat_message(message.chat.id, message.reply_to_message.message_id)
                 bot.reply_to(message, "📌 Unpinned!")
             else:
@@ -502,16 +512,18 @@ def module_pin(message):
 # 14. Rules & Reports
 @bot.message_handler(commands=['report', 'reports', 'rules', 'setrules'])
 def module_rules_reports(message):
+    cmd = message.text.split()[0].replace('/', '').lower()
+    if is_command_disabled(message, cmd): return
     if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat တွင်သာ အလုပ်လုပ်ပါသည်။")
     chat_id = message.chat.id
     parts = message.text.split(maxsplit=1)
 
-    if 'reports' in parts[0] and is_admin(chat_id, message.from_user.id):
+    if cmd == 'reports' and is_admin(chat_id, message.from_user.id):
         status = 1 if len(parts) > 1 and parts[1].lower() == 'off' else 0
         db.set_setting(chat_id, "disabled_reports", status)
         return bot.reply_to(message, f"📢 User Reports: `{'OFF' if status else 'ON'}`")
 
-    if 'report' in parts[0]:
+    if cmd == 'report':
         if db.get_setting(chat_id, "disabled_reports", 0) == 1: return
         if message.reply_to_message:
             admins = bot.get_chat_administrators(chat_id)
@@ -519,11 +531,11 @@ def module_rules_reports(message):
             bot.reply_to(message.reply_to_message, f"🚨 **Reported to Admins!**\n{mentions}")
         return
 
-    if 'setrules' in parts[0] and is_admin(chat_id, message.from_user.id):
+    if cmd == 'setrules' and is_admin(chat_id, message.from_user.id):
         if len(parts) > 1:
             db.set_setting(chat_id, "rules_text", parts[1])
             bot.reply_to(message, "📜 Group Rules အား သတ်မှတ်လိုက်ပါပြီ။")
-    elif 'rules' in parts[0]:
+    elif cmd == 'rules':
         rule_txt = db.get_setting(chat_id, "rules_text", "📜 **Rules မသတ်မှတ်ရသေးပါ။**")
         txt, markup = parse_button_links(rule_txt)
         bot.reply_to(message, txt, reply_markup=markup)
@@ -531,6 +543,8 @@ def module_rules_reports(message):
 # 15. Warns
 @bot.message_handler(commands=['warn', 'warns', 'resetwarns'])
 def module_warns(message):
+    cmd = message.text.split()[0].replace('/', '').lower()
+    if is_command_disabled(message, cmd): return
     if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat တွင်သာ အလုပ်လုပ်ပါသည်။")
     if not is_admin(message.chat.id, message.from_user.id): return
     if not message.reply_to_message: 
@@ -538,7 +552,6 @@ def module_warns(message):
 
     uid = message.reply_to_message.from_user.id
     chat_id = message.chat.id
-    cmd = message.text.split()[0].replace('/', '').lower()
 
     db.cursor.execute("SELECT count FROM warns WHERE chat_id=? AND user_id=?", (chat_id, uid))
     res = db.cursor.fetchone()
@@ -642,7 +655,8 @@ def handle_help_pages(call: CallbackQuery):
 # ==========================================
 # 🔄 7. AUTOMATION & LISTENER ENGINE
 # ==========================================
-@bot.message_handler(func=lambda message: True, content_types=['text', 'new_chat_members', 'left_chat_member', 'sticker', 'document', 'photo'])
+# Filtering commands out to avoid conflicts with @bot.message_handler(commands=...)
+@bot.message_handler(func=lambda message: not (message.text and message.text.startswith('/')), content_types=['text', 'new_chat_members', 'left_chat_member', 'sticker', 'document', 'photo'])
 def global_automation_handler(message):
     chat_id = message.chat.id
     user_id = message.from_user.id
@@ -680,15 +694,7 @@ def global_automation_handler(message):
             except Exception: pass
             return
 
-    # 3. Disabling Commands
-    if message.text and message.text.startswith('/'):
-        cmd_name = message.text.split()[0].replace('/', '').lower()
-        disabled_list = db.get_items("disabled_cmds", chat_id, "command")
-        if cmd_name in disabled_list:
-            bot.reply_to(message, "❌ ဒီ Command အား Admin မှ ပိတ်ထားပါသည်။")
-            return
-
-    # 4. Badwords Auto Filter
+    # 3. Badwords Auto Filter
     if message.text and not is_user_approved:
         text_lower = message.text.lower()
         badwords = db.get_items("badwords", chat_id, "word")
@@ -700,7 +706,7 @@ def global_automation_handler(message):
                     return
                 except Exception: pass
 
-        # 5. Anti-Flood Control
+        # 4. Anti-Flood Control
         limit = db.get_setting(chat_id, "flood_limit", 0)
         if limit > 0 and not is_admin(chat_id, user_id):
             now = time.time()
@@ -717,7 +723,7 @@ def global_automation_handler(message):
                 user_flood_tracker[chat_id][user_id] = []
                 return
 
-        # 6. Notes (#notename) & Filters Trigger
+        # 5. Notes (#notename) & Filters Trigger
         if text_lower.startswith("#"):
             note_key = text_lower[1:]
             notes = db.get_kv_items("notes", chat_id, "note_name", "content")
@@ -735,5 +741,5 @@ def global_automation_handler(message):
 # 🚀 8. BOT INFINITY POLLING
 # ==========================================
 if __name__ == '__main__':
-    print("🤖 Clean & Stable Telegram Management Engine Active!")
+    print("🤖 Clean & Bug-Free Telegram Management Engine Active!")
     bot.infinity_polling(skip_pending=True)
