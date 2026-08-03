@@ -59,11 +59,17 @@ class Database:
             lang TEXT DEFAULT 'my'
         )
         """)
-        # Group Registration Table (For Global Broadcast & Stats)
+        # Group Registration Table
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS groups (
             chat_id INTEGER PRIMARY KEY,
             chat_title TEXT
+        )
+        """)
+        # Persistent Sudo Users Table (Restart ပေးလည်း မပျောက်စေရန်)
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sudos (
+            user_id INTEGER PRIMARY KEY
         )
         """)
         # Filters, Notes, Badwords, Blocklists
@@ -78,6 +84,19 @@ class Database:
         self.cursor.execute("CREATE TABLE IF NOT EXISTS locks (chat_id INTEGER, lock_type TEXT, PRIMARY KEY (chat_id, lock_type))")
         self.cursor.execute("CREATE TABLE IF NOT EXISTS disabled_cmds (chat_id INTEGER, command TEXT, PRIMARY KEY (chat_id, command))")
         self.conn.commit()
+
+    # Sudo Management Methods
+    def add_sudo(self, user_id):
+        self.cursor.execute("INSERT OR IGNORE INTO sudos (user_id) VALUES (?)", (user_id,))
+        self.conn.commit()
+
+    def remove_sudo(self, user_id):
+        self.cursor.execute("DELETE FROM sudos WHERE user_id=?", (user_id,))
+        self.conn.commit()
+
+    def get_sudos(self):
+        self.cursor.execute("SELECT user_id FROM sudos")
+        return [r[0] for r in self.cursor.fetchall()]
 
     def add_group(self, chat_id, title):
         self.cursor.execute("INSERT OR REPLACE INTO groups (chat_id, chat_title) VALUES (?, ?)", (chat_id, title))
@@ -123,7 +142,8 @@ db = Database()
 BOT_TOKEN = "8886077155:AAET1U9CXGZtaiIBLYxAutzFKFe-BkQpVno"
 API_ID = 31788996
 API_HASH = "0c6714a879b2b1abba75dc4526521ca8"
-OWNER_IDS = [7974865879, 7177628115, 8438417346]
+# ပင်မ Master Owner များ၏ ID
+MASTER_OWNERS = [7974865879, 7177628115, 8438417346]
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
 userbot = Client("myuserbot", api_id=API_ID, api_hash=API_HASH)
@@ -178,7 +198,10 @@ def parse_button_links(text):
 # 🛡️ 5. HELPER PERMISSIONS
 # ==========================================
 def is_owner(user_id):
-    return user_id in OWNER_IDS
+    if user_id in MASTER_OWNERS:
+        return True
+    db_sudos = db.get_sudos()
+    return user_id in db_sudos
 
 def is_admin(chat_id, user_id):
     if is_owner(user_id) or chat_id == user_id:
@@ -193,24 +216,44 @@ def is_admin(chat_id, user_id):
 # 🚀 6. ALL MODULES LOGIC
 # ==========================================
 
-# 1. Admin List & Sudo Management
-@bot.message_handler(commands=['admin', 'admins', 'addsudo', 'rmsudo'])
+# 1. Admin List & Persistent Sudo Management
+@bot.message_handler(commands=['admin', 'admins', 'addsudo', 'rmsudo', 'sudolist'])
 def module_admin(message):
-    if message.chat.type == 'private':
-        return bot.reply_to(message, "⚠️ ဒီ Command သည် Group Chat ထဲတွင်သာ အလုပ်လုပ်ပါသည်။")
+    cmd = message.text.split()[0].replace('/', '').lower()
 
-    if 'addsudo' in message.text or 'rmsudo' in message.text:
-        if not is_owner(message.from_user.id):
-            return bot.reply_to(message, "❌ Bot Owner သာလျှင် Sudo စီမံနိုင်ပါသည်။")
+    if cmd in ['addsudo', 'rmsudo', 'sudolist']:
+        if message.from_user.id not in MASTER_OWNERS:
+            return bot.reply_to(message, "❌ Master Bot Owner သာလျှင် Sudo စီမံနိုင်ပါသည်။")
+
+        if cmd == 'sudolist':
+            sudos = db.get_sudos()
+            s_str = "\n".join([f"• `{s}`" for s in sudos])
+            return bot.reply_to(message, f"👑 **Database Sudo Admins စာရင်း:**\n\n{s_str if s_str else 'Sudo မရှိသေးပါ'}")
+
         if message.reply_to_message:
             target_id = message.reply_to_message.from_user.id
-            if 'addsudo' in message.text:
-                if target_id not in OWNER_IDS: OWNER_IDS.append(target_id)
-                bot.reply_to(message, f"👑 User `{target_id}` အား Sudo ထဲသို့ ထည့်ပြီးပါပြီ။")
+            if cmd == 'addsudo':
+                db.add_sudo(target_id)
+                bot.reply_to(message, f"👑 User `{target_id}` အား Database Sudo အဖြစ် သိမ်းဆည်းလိုက်ပါပြီ။ (Restart ပေးလည်း မပျောက်ပါ)")
+            elif cmd == 'rmsudo':
+                db.remove_sudo(target_id)
+                bot.reply_to(message, f"🗑️ User `{target_id}` အား Sudo စာရင်းမှ ဖယ်ထုတ်လိုက်ပါပြီ။")
+        else:
+            parts = message.text.split()
+            if len(parts) > 1 and parts[1].isdigit():
+                target_id = int(parts[1])
+                if cmd == 'addsudo':
+                    db.add_sudo(target_id)
+                    bot.reply_to(message, f"👑 User `{target_id}` အား Database Sudo အဖြစ် သိမ်းဆည်းလိုက်ပါပြီ။")
+                elif cmd == 'rmsudo':
+                    db.remove_sudo(target_id)
+                    bot.reply_to(message, f"🗑️ User `{target_id}` အား Sudo မှ ဖယ်ထုတ်လိုက်ပါပြီ။")
             else:
-                if target_id in OWNER_IDS: OWNER_IDS.remove(target_id)
-                bot.reply_to(message, f"🗑️ User `{target_id}` အား Sudo မှ ဖယ်ထုတ်ပြီးပါပြီ။")
+                bot.reply_to(message, "⚠️ **Usage:** User ၏ Message ကို Reply ပြန်၍ `/addsudo` ရိုက်ပါ သို့မဟုတ် `/addsudo <User_ID>` ရိုက်ပါ။")
         return
+
+    if message.chat.type == 'private':
+        return bot.reply_to(message, "⚠️ ဒီ Command သည် Group Chat ထဲတွင်သာ အလုပ်လုပ်ပါသည်။")
 
     admins = bot.get_chat_administrators(message.chat.id)
     admin_list = "\n".join([f"• [{a.user.first_name}](tg://user?id={a.user.id})" for a in admins])
@@ -550,20 +593,20 @@ def module_warns(message):
         db.add_item("warns", chat_id, "user_id", "count", uid, curr_warns)
         bot.reply_to(message, f"⚠️ User အား သတိပေးလိုက်ပါပြီ (Warn Status: {curr_warns}/3)")
 
-# NEW: Stats & Groups Check Command (Owner Only)
+# Stats & Groups Check Command (Owner/Sudo Only)
 @bot.message_handler(commands=['stats', 'groups'])
 def module_stats(message):
     if not is_owner(message.from_user.id):
-        return bot.reply_to(message, "❌ Bot Owner သာလျှင် ကြည့်ရှုနိုင်ပါသည်။")
+        return bot.reply_to(message, "❌ Bot Owner သို့မဟုတ် Sudo Admin သာလျှင် ကြည့်ရှုနိုင်ပါသည်။")
     
     all_groups = db.get_all_groups()
     bot.reply_to(message, f"📊 **Bot Current Stats:**\n\n🏠 စုစုပေါင်း ရောက်ရှိနေသော Group အရေအတွက်: `{len(all_groups)}` ခု")
 
-# 21. Global Broadcast (Owner Only)
+# 21. Global Broadcast (Owner/Sudo Only)
 @bot.message_handler(commands=['broadcast'])
 def module_broadcast(message):
     if not is_owner(message.from_user.id):
-        return bot.reply_to(message, "❌ Bot Owner သာလျှင် Broadcast ပို့နိုင်ပါသည်။")
+        return bot.reply_to(message, "❌ Bot Owner သို့မဟုတ် Sudo Admin သာလျှင် Broadcast ပို့နိုင်ပါသည်။")
 
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
@@ -616,7 +659,7 @@ def handle_help_pages(call: CallbackQuery):
         "3": "📌 **Filters & Notes:**\n\n• `/save <note> <text>` - Note သိမ်းရန်\n• `/notes`, `/clear <note>` - Notes ကြည့်/ဖျက်ရန်\n• `/filter <key> <text>` - Filter သတ်မှတ်ရန်\n• `/stop <key>` - Filter ဖျက်ရန်",
         "4": "📌 **Locks & Misc:**\n\n• `/lock <type>`, `/unlock` - Stickers/Links/Media ပိတ်ရန်\n• `/locks` - ပိတ်ထားသည်များ ကြည့်ရန်\n• `/id`, `/info` - User Info ကြည့်ရန်\n• `/markdown` - Formatting လမ်းညွှန်",
         "5": "📌 **Rules, Reports & Warns:**\n\n• `/setrules <text>`, `/rules` - Group စည်းကမ်းများ\n• `/report` - Admin သို့ တိုင်ကြားရန်\n• `/warn`, `/warns`, `/resetwarns` - Warning စနစ်",
-        "6": "📌 **Broadcast & Button Link Syntax:**\n\n• `/broadcast <text>` - Bot ရှိသော Group အားလုံးသို့ ကြော်ငြာပို့ရန် (Owner သာ)\n• `/stats`, `/groups` - ရောက်ရှိနေသော Group အရေအတွက် ကြည့်ရန်\n\n🔘 **Button Link ထည့်နည်း:**\n`[ခလုတ်အမည်](buttonurl://https://yourlink.com)`"
+        "6": "📌 **Broadcast, Sudo & Buttons Syntax:**\n\n• `/addsudo`, `/rmsudo` - Sudo တိုး/လျှော့ ပြုလုပ်ရန်\n• `/sudolist` - Sudo Admin စာရင်းကြည့်ရန်\n• `/broadcast <text>` - Bot ရှိသော Group အားလုံးသို့ ကြော်ငြာပို့ရန်\n• `/stats`, `/groups` - ရောက်ရှိနေသော Group အရေအတွက် ကြည့်ရန်\n\n🔘 **Button Link ထည့်နည်း:**\n`[ခလုတ်အမည်](buttonurl://https://yourlink.com)`"
     }
 
     text_to_show = pages_content.get(page, "ℹ️ အချက်အလက် မရှိပါ။")
