@@ -1,21 +1,11 @@
-import asyncio
-
-# Python 3.10+ / Python 3.14 Event Loop Compatibility Fix
-try:
-    asyncio.get_event_loop()
-except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
-
 import os
 import re
 import time
-import json
 import sqlite3
 import threading
 from flask import Flask
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from pyrogram import Client
 
 # ==========================================
 # 🌐 1. KEEP ALIVE WEB SERVER (For Hosting)
@@ -24,7 +14,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "All-in-One Professional Telegram Group Management Bot is Running!"
+    return "All-in-One Telegram Group Management Bot is Running Perfectly!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -51,12 +41,7 @@ class Database:
             rules_text TEXT,
             flood_limit INTEGER DEFAULT 0,
             antiraid INTEGER DEFAULT 0,
-            captcha INTEGER DEFAULT 0,
-            clean_cmd INTEGER DEFAULT 0,
-            clean_service INTEGER DEFAULT 0,
-            log_channel INTEGER DEFAULT 0,
-            disabled_reports INTEGER DEFAULT 0,
-            lang TEXT DEFAULT 'my'
+            disabled_reports INTEGER DEFAULT 0
         )
         """)
         # Group Registration Table
@@ -66,7 +51,7 @@ class Database:
             chat_title TEXT
         )
         """)
-        # Persistent Sudo Users Table (Restart ပေးလည်း မပျောက်စေရန်)
+        # Persistent Sudo Users Table
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS sudos (
             user_id INTEGER PRIMARY KEY
@@ -85,7 +70,7 @@ class Database:
         self.cursor.execute("CREATE TABLE IF NOT EXISTS disabled_cmds (chat_id INTEGER, command TEXT, PRIMARY KEY (chat_id, command))")
         self.conn.commit()
 
-    # Sudo Management Methods
+    # Sudo Management
     def add_sudo(self, user_id):
         self.cursor.execute("INSERT OR IGNORE INTO sudos (user_id) VALUES (?)", (user_id,))
         self.conn.commit()
@@ -98,6 +83,7 @@ class Database:
         self.cursor.execute("SELECT user_id FROM sudos")
         return [r[0] for r in self.cursor.fetchall()]
 
+    # Group Management
     def add_group(self, chat_id, title):
         self.cursor.execute("INSERT OR REPLACE INTO groups (chat_id, chat_title) VALUES (?, ?)", (chat_id, title))
         self.conn.commit()
@@ -106,15 +92,22 @@ class Database:
         self.cursor.execute("SELECT chat_id FROM groups")
         return [r[0] for r in self.cursor.fetchall()]
 
+    # Settings Dynamic Getter/Setter
     def set_setting(self, chat_id, column, value):
-        self.cursor.execute(f"INSERT INTO settings (chat_id, {column}) VALUES (?, ?) ON CONFLICT(chat_id) DO UPDATE SET {column}=?", (chat_id, value, value))
-        self.conn.commit()
+        allowed_cols = ["welcome_text", "goodbye_text", "rules_text", "flood_limit", "antiraid", "disabled_reports"]
+        if column in allowed_cols:
+            self.cursor.execute(f"INSERT INTO settings (chat_id, {column}) VALUES (?, ?) ON CONFLICT(chat_id) DO UPDATE SET {column}=?", (chat_id, value, value))
+            self.conn.commit()
 
     def get_setting(self, chat_id, column, default=None):
+        allowed_cols = ["welcome_text", "goodbye_text", "rules_text", "flood_limit", "antiraid", "disabled_reports"]
+        if column not in allowed_cols:
+            return default
         self.cursor.execute(f"SELECT {column} FROM settings WHERE chat_id=?", (chat_id,))
         res = self.cursor.fetchone()
         return res[0] if res and res[0] is not None else default
 
+    # Key-Value Helpers
     def add_item(self, table, chat_id, key_col, val_col, key_val, val_val=None):
         if val_col:
             self.cursor.execute(f"INSERT OR REPLACE INTO {table} (chat_id, {key_col}, {val_col}) VALUES (?, ?, ?)", (chat_id, key_val, val_val))
@@ -140,23 +133,9 @@ db = Database()
 # 🔑 3. CONFIG & INITIALIZATION
 # ==========================================
 BOT_TOKEN = "8886077155:AAET1U9CXGZtaiIBLYxAutzFKFe-BkQpVno"
-API_ID = 31788996
-API_HASH = "0c6714a879b2b1abba75dc4526521ca8"
-# ပင်မ Master Owner များ၏ ID
 MASTER_OWNERS = [7974865879, 7177628115, 8438417346]
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
-userbot = Client("myuserbot", api_id=API_ID, api_hash=API_HASH)
-
-def start_userbot():
-    try:
-        userbot.start()
-        print("✅ Pyrogram Userbot Started Successfully.")
-    except Exception as e:
-        print(f"⚠️ Userbot Client Warning: {e}")
-
-threading.Thread(target=start_userbot, daemon=True).start()
-
 user_flood_tracker = {}
 
 # ==========================================
@@ -200,8 +179,7 @@ def parse_button_links(text):
 def is_owner(user_id):
     if user_id in MASTER_OWNERS:
         return True
-    db_sudos = db.get_sudos()
-    return user_id in db_sudos
+    return user_id in db.get_sudos()
 
 def is_admin(chat_id, user_id):
     if is_owner(user_id) or chat_id == user_id:
@@ -213,10 +191,10 @@ def is_admin(chat_id, user_id):
         return False
 
 # ==========================================
-# 🚀 6. ALL MODULES LOGIC
+# 🚀 6. COMMAND HANDLERS
 # ==========================================
 
-# 1. Admin List & Persistent Sudo Management
+# 1. Admin & Sudo Commands
 @bot.message_handler(commands=['admin', 'admins', 'addsudo', 'rmsudo', 'sudolist'])
 def module_admin(message):
     cmd = message.text.split()[0].replace('/', '').lower()
@@ -234,7 +212,7 @@ def module_admin(message):
             target_id = message.reply_to_message.from_user.id
             if cmd == 'addsudo':
                 db.add_sudo(target_id)
-                bot.reply_to(message, f"👑 User `{target_id}` အား Database Sudo အဖြစ် သိမ်းဆည်းလိုက်ပါပြီ။ (Restart ပေးလည်း မပျောက်ပါ)")
+                bot.reply_to(message, f"👑 User `{target_id}` အား Sudo အဖြစ် သိမ်းဆည်းပြီးပါပြီ။")
             elif cmd == 'rmsudo':
                 db.remove_sudo(target_id)
                 bot.reply_to(message, f"🗑️ User `{target_id}` အား Sudo စာရင်းမှ ဖယ်ထုတ်လိုက်ပါပြီ။")
@@ -244,40 +222,43 @@ def module_admin(message):
                 target_id = int(parts[1])
                 if cmd == 'addsudo':
                     db.add_sudo(target_id)
-                    bot.reply_to(message, f"👑 User `{target_id}` အား Database Sudo အဖြစ် သိမ်းဆည်းလိုက်ပါပြီ။")
+                    bot.reply_to(message, f"👑 User `{target_id}` အား Sudo အဖြစ် သိမ်းဆည်းပြီးပါပြီ။")
                 elif cmd == 'rmsudo':
                     db.remove_sudo(target_id)
                     bot.reply_to(message, f"🗑️ User `{target_id}` အား Sudo မှ ဖယ်ထုတ်လိုက်ပါပြီ။")
             else:
-                bot.reply_to(message, "⚠️ **Usage:** User ၏ Message ကို Reply ပြန်၍ `/addsudo` ရိုက်ပါ သို့မဟုတ် `/addsudo <User_ID>` ရိုက်ပါ။")
+                bot.reply_to(message, "⚠️ **Usage:** User စာကို Reply ပြန်၍ `/addsudo` သို့မဟုတ် `/addsudo <User_ID>` ရိုက်ပါ။")
         return
 
     if message.chat.type == 'private':
         return bot.reply_to(message, "⚠️ ဒီ Command သည် Group Chat ထဲတွင်သာ အလုပ်လုပ်ပါသည်။")
 
-    admins = bot.get_chat_administrators(message.chat.id)
-    admin_list = "\n".join([f"• [{a.user.first_name}](tg://user?id={a.user.id})" for a in admins])
-    bot.reply_to(message, f"👑 **Group Admin စာရင်း:**\n\n{admin_list}")
+    try:
+        admins = bot.get_chat_administrators(message.chat.id)
+        admin_list = "\n".join([f"• [{a.user.first_name}](tg://user?id={a.user.id})" for a in admins])
+        bot.reply_to(message, f"👑 **Group Admin စာရင်း:**\n\n{admin_list}")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: `{e}`")
 
 # 2. Antiflood
 @bot.message_handler(commands=['setflood', 'flood'])
 def module_antiflood(message):
-    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ ဒီ Command သည် Group Chat ထဲတွင်သာ အလုပ်လုပ်ပါသည်။")
+    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat တွင်သာ အလုပ်လုပ်ပါသည်။")
     if not is_admin(message.chat.id, message.from_user.id): return
     
     parts = message.text.split()
     if len(parts) > 1 and parts[1].isdigit():
         limit = int(parts[1])
         db.set_setting(message.chat.id, "flood_limit", limit)
-        bot.reply_to(message, f"🛡️ Antiflood Limit ကို `{limit}` စာစောင်အဖြစ် သတ်မှတ်လိုက်ပါပြီ။ (0 = ပိတ်ရန်)")
+        bot.reply_to(message, f"🛡️ Antiflood Limit ကို `{limit}` စာစောင်အဖြစ် သတ်မှတ်လိုက်ပါပြီ။")
     else:
         curr = db.get_setting(message.chat.id, "flood_limit", 0)
-        bot.reply_to(message, f"🛡️ **လက်ရှိ Antiflood Limit:** `{curr}`\nပြောင်းရန်: `/setflood 5` (၅ စက္ကန့်အတွင်း စာ limit)")
+        bot.reply_to(message, f"🛡️ **လက်ရှိ Antiflood Limit:** `{curr}`\nပြောင်းရန်: `/setflood 5` (0 = ပိတ်ရန်)")
 
 # 3. Antiraid
 @bot.message_handler(commands=['antiraid'])
 def module_antiraid(message):
-    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ ဒီ Command သည် Group Chat ထဲတွင်သာ အလုပ်လုပ်ပါသည်။")
+    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat တွင်သာ အလုပ်လုပ်ပါသည်။")
     if not is_admin(message.chat.id, message.from_user.id): return
     
     parts = message.text.split()
@@ -288,7 +269,7 @@ def module_antiraid(message):
 # 4. Approval System
 @bot.message_handler(commands=['approve', 'unapprove', 'approved'])
 def module_approval(message):
-    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ ဒီ Command သည် Group Chat ထဲတွင်သာ အလုပ်လုပ်ပါသည်။")
+    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat တွင်သာ အလုပ်လုပ်ပါသည်။")
     if not is_admin(message.chat.id, message.from_user.id): return
     chat_id = message.chat.id
 
@@ -299,7 +280,7 @@ def module_approval(message):
         return
 
     if not message.reply_to_message:
-        return bot.reply_to(message, "⚠️ Approve / Unapprove ပေးလိုသော User ၏ Message ကို Reply ပြန်ပါ။")
+        return bot.reply_to(message, "⚠️ User Message အား Reply ပြန်၍ အသုံးပြုပါ။")
 
     uid = message.reply_to_message.from_user.id
     if 'unapprove' in message.text:
@@ -309,11 +290,11 @@ def module_approval(message):
         db.add_item("approved", chat_id, "user_id", None, uid)
         bot.reply_to(message, f"✅ User `{uid}` အား Approved စာရင်းသို့ ထည့်လိုက်ပါပြီ။")
 
-# 5. Bans, Unban, Mute, Unmute, Kick
+# 5. Bans & Moderation
 @bot.message_handler(commands=['ban', 'unban', 'mute', 'unmute', 'kick'])
 def module_bans(message):
     if message.chat.type == 'private': 
-        return bot.reply_to(message, "⚠️ ဒီ Command သည် Group Chat ထဲတွင်သာ အသုံးပြု၍ ရပါမည်။")
+        return bot.reply_to(message, "⚠️ Group Chat ထဲတွင်သာ အသုံးပြုနိုင်ပါသည်။")
     
     if not is_admin(message.chat.id, message.from_user.id): return
     if not message.reply_to_message:
@@ -345,7 +326,7 @@ def module_bans(message):
 # 6. Blocklists & Badwords
 @bot.message_handler(commands=['addbad', 'rmbad', 'addblock', 'rmblock', 'badwords', 'blocklist'])
 def module_blocklists_badwords(message):
-    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ ဒီ Command သည် Group Chat ထဲတွင်သာ အလုပ်လုပ်ပါသည်။")
+    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat တွင်သာ အလုပ်လုပ်ပါသည်။")
     if not is_admin(message.chat.id, message.from_user.id): return
     chat_id = message.chat.id
     cmd = message.text.split()[0].replace('/', '').lower()
@@ -376,7 +357,7 @@ def module_blocklists_badwords(message):
 # 7. Disabling Commands
 @bot.message_handler(commands=['disable', 'enable', 'disabled'])
 def module_disabling(message):
-    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ ဒီ Command သည် Group Chat ထဲတွင်သာ အလုပ်လုပ်ပါသည်။")
+    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat တွင်သာ အလုပ်လုပ်ပါသည်။")
     if not is_admin(message.chat.id, message.from_user.id): return
     chat_id = message.chat.id
     parts = message.text.split()
@@ -400,7 +381,7 @@ def module_disabling(message):
 # 8. Filters & Notes
 @bot.message_handler(commands=['filter', 'stop', 'save', 'clear', 'notes', 'filters'])
 def module_filters_notes(message):
-    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ ဒီ Command သည် Group Chat ထဲတွင်သာ အလုပ်လုပ်ပါသည်။")
+    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat တွင်သာ အလုပ်လုပ်ပါသည်။")
     if not is_admin(message.chat.id, message.from_user.id): return
     chat_id = message.chat.id
     cmd = message.text.split()[0].replace('/', '').lower()
@@ -417,7 +398,7 @@ def module_filters_notes(message):
 
     parts = message.text.split(maxsplit=2)
     if len(parts) < 2:
-        return bot.reply_to(message, "⚠️ **Usage:** `/save <note_name> <text>` သို့မဟုတ် `/filter <keyword> <text>`")
+        return bot.reply_to(message, "⚠️ **Usage:** `/save <note> <text>` သို့မဟုတ် `/filter <key> <text>`")
 
     key = parts[1].lower()
     if cmd in ['clear', 'stop']:
@@ -439,47 +420,37 @@ def module_filters_notes(message):
 @bot.message_handler(commands=['markdown', 'formatting'])
 def module_formatting(message):
     guide = (
-        "✨ **Formatting Guide & Button Link Syntax:**\n\n"
+        "✨ **Formatting Guide & Button Syntax:**\n\n"
         "• *Bold* -> `*text*`\n"
         "• _Italic_ -> `_text_`\n"
         "• `Monospace` -> `` `text` ``\n"
         "• [Hyperlink](https://google.com) -> `[Text](url)`\n\n"
-        "🔘 **Inline Button Links:**\n"
-        "`[Button Title](buttonurl://https://yourlink.com)`\n\n"
-        "🔘 **တစ်တန်းတည်း မလ်တီ ခလုတ်များ:**\n"
-        "`[Btn 1](buttonurl://https://link1.com) [Btn 2](buttonurl://https://link2.com:same)`"
+        "🔘 **Button Links:**\n"
+        "`[Button Title](buttonurl://https://yourlink.com)`"
     )
     bot.reply_to(message, guide)
 
-# 10. Greetings (Welcome & Goodbye)
-@bot.message_handler(commands=['setwelcome', 'setgoodbye', 'welcome', 'goodbye'])
+# 10. Greetings
+@bot.message_handler(commands=['setwelcome', 'setgoodbye'])
 def module_greetings(message):
-    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ ဒီ Command သည် Group Chat ထဲတွင်သာ အလုပ်လုပ်ပါသည်။")
+    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat တွင်သာ အလုပ်လုပ်ပါသည်။")
     if not is_admin(message.chat.id, message.from_user.id): return
     chat_id = message.chat.id
     parts = message.text.split(maxsplit=1)
     cmd = parts[0].replace('/', '').lower()
 
-    if cmd == 'setwelcome':
-        if len(parts) > 1:
-            db.set_setting(chat_id, "welcome_text", parts[1])
-            txt, markup = parse_button_links(parts[1])
-            bot.reply_to(message, f"👋 **Welcome Message သတ်မှတ်ပြီးပါပြီ:**\n\n{txt}", reply_markup=markup)
-        else:
-            bot.reply_to(message, "⚠️ **Usage:** `/setwelcome ကြိုဆိုပါတယ်! [Channel](buttonurl://https://t.me/xxx)`")
+    if len(parts) > 1:
+        col = "welcome_text" if cmd == 'setwelcome' else "goodbye_text"
+        db.set_setting(chat_id, col, parts[1])
+        txt, markup = parse_button_links(parts[1])
+        bot.reply_to(message, f"👋 **{cmd.capitalize()} Message သတ်မှတ်ပြီးပါပြီ:**\n\n{txt}", reply_markup=markup)
+    else:
+        bot.reply_to(message, f"⚠️ **Usage:** `/{cmd} စာသား [Button](buttonurl://link)`")
 
-    elif cmd == 'setgoodbye':
-        if len(parts) > 1:
-            db.set_setting(chat_id, "goodbye_text", parts[1])
-            txt, markup = parse_button_links(parts[1])
-            bot.reply_to(message, f"👋 **Goodbye Message သတ်မှတ်ပြီးပါပြီ:**\n\n{txt}", reply_markup=markup)
-        else:
-            bot.reply_to(message, "⚠️ **Usage:** `/setgoodbye သွားတော့နော်! [Website](buttonurl://https://xxx.com)`")
-
-# 11. Locks System
+# 11. Locks
 @bot.message_handler(commands=['lock', 'unlock', 'locks'])
 def module_locks(message):
-    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ ဒီ Command သည် Group Chat ထဲတွင်သာ အလုပ်လုပ်ပါသည်။")
+    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat တွင်သာ အလုပ်လုပ်ပါသည်။")
     if not is_admin(message.chat.id, message.from_user.id): return
     chat_id = message.chat.id
 
@@ -490,7 +461,7 @@ def module_locks(message):
 
     parts = message.text.split()
     if len(parts) < 2:
-        return bot.reply_to(message, "⚠️ **Usage:** `/lock stickers` (သို့မဟုတ် `links`, `media`)")
+        return bot.reply_to(message, "⚠️ **Usage:** `/lock stickers` (သို့မဟုတ် `links`)")
 
     ltype = parts[1].lower()
     if 'unlock' in parts[0]:
@@ -500,7 +471,7 @@ def module_locks(message):
         db.add_item("locks", chat_id, "lock_type", None, ltype)
         bot.reply_to(message, f"🔒 `{ltype}` ကို ပိတ်လိုက်ပါပြီ။")
 
-# 12. Misc Module
+# 12. Misc & ID
 @bot.message_handler(commands=['id', 'info'])
 def module_misc(message):
     target = message.reply_to_message.from_user if message.reply_to_message else message.from_user
@@ -508,35 +479,30 @@ def module_misc(message):
         f"ℹ️ **User Information:**\n\n"
         f"👤 First Name: {target.first_name}\n"
         f"🆔 User ID: `{target.id}`\n"
-        f"💬 Group Chat ID: `{message.chat.id}`"
+        f"💬 Chat ID: `{message.chat.id}`"
     )
     bot.reply_to(message, info)
 
-# 14. Pin Module
+# 13. Pin
 @bot.message_handler(commands=['pin', 'unpin'])
 def module_pin(message):
-    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ ဒီ Command သည် Group Chat ထဲတွင်သာ အလုပ်လုပ်ပါသည်။")
+    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat တွင်သာ အလုပ်လုပ်ပါသည်။")
     if not is_admin(message.chat.id, message.from_user.id): return
     if message.reply_to_message:
         try:
             if 'unpin' in message.text:
                 bot.unpin_chat_message(message.chat.id, message.reply_to_message.message_id)
-                bot.reply_to(message, "📌 Unpinned Success!")
+                bot.reply_to(message, "📌 Unpinned!")
             else:
                 bot.pin_chat_message(message.chat.id, message.reply_to_message.message_id)
-                bot.reply_to(message, "📌 Pinned Success!")
+                bot.reply_to(message, "📌 Pinned!")
         except Exception as e:
             bot.reply_to(message, f"❌ Pin Error: `{e}`")
 
-# 15. Privacy Policy
-@bot.message_handler(commands=['privacy'])
-def module_privacy(message):
-    bot.reply_to(message, "🔒 **Privacy Policy:** ဒီ Bot သည် Group စီမံခန့်ခွဲရန်အတွက် အချက်အလက်များ (Settings, Notes, Filters) များကို SQLite Database တွင် လုံခြုံစွာ သိမ်းဆည်းပါသည်။ Personal Data များကို သီးသန့်ရယူခြင်း မရှိပါ။")
-
-# 16. Reports System & 17. Rules
+# 14. Rules & Reports
 @bot.message_handler(commands=['report', 'reports', 'rules', 'setrules'])
 def module_rules_reports(message):
-    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ ဒီ Command သည် Group Chat ထဲတွင်သာ အလုပ်လုပ်ပါသည်။")
+    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat တွင်သာ အလုပ်လုပ်ပါသည်။")
     chat_id = message.chat.id
     parts = message.text.split(maxsplit=1)
 
@@ -562,13 +528,13 @@ def module_rules_reports(message):
         txt, markup = parse_button_links(rule_txt)
         bot.reply_to(message, txt, reply_markup=markup)
 
-# 18. Warnings System
+# 15. Warns
 @bot.message_handler(commands=['warn', 'warns', 'resetwarns'])
 def module_warns(message):
-    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ ဒီ Command သည် Group Chat ထဲတွင်သာ အလုပ်လုပ်ပါသည်။")
+    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat တွင်သာ အလုပ်လုပ်ပါသည်။")
     if not is_admin(message.chat.id, message.from_user.id): return
     if not message.reply_to_message: 
-        return bot.reply_to(message, "⚠️ Warn စနစ် အသုံးပြုရန် User ၏ စာကို Reply ပြန်ပါ။")
+        return bot.reply_to(message, "⚠️ Warn ပေးလိုသော User ၏ စာကို Reply ပြန်ပါ။")
 
     uid = message.reply_to_message.from_user.id
     chat_id = message.chat.id
@@ -588,50 +554,42 @@ def module_warns(message):
     if curr_warns >= 3:
         bot.ban_chat_member(chat_id, uid)
         db.remove_item("warns", chat_id, "user_id", uid)
-        bot.reply_to(message, f"🚨 User ၏ Warn Limit (3/3) ပြည့်သွားသဖြင့် Ban လိုက်ပါပြီ။")
+        bot.reply_to(message, f"🚨 Warn Limit (3/3) ပြည့်သွားသဖြင့် Ban လိုက်ပါပြီ။")
     else:
         db.add_item("warns", chat_id, "user_id", "count", uid, curr_warns)
         bot.reply_to(message, f"⚠️ User အား သတိပေးလိုက်ပါပြီ (Warn Status: {curr_warns}/3)")
 
-# Stats & Groups Check Command (Owner/Sudo Only)
-@bot.message_handler(commands=['stats', 'groups'])
-def module_stats(message):
+# 16. Stats & Broadcast
+@bot.message_handler(commands=['stats', 'groups', 'broadcast'])
+def module_owner_tools(message):
     if not is_owner(message.from_user.id):
-        return bot.reply_to(message, "❌ Bot Owner သို့မဟုတ် Sudo Admin သာလျှင် ကြည့်ရှုနိုင်ပါသည်။")
-    
-    all_groups = db.get_all_groups()
-    bot.reply_to(message, f"📊 **Bot Current Stats:**\n\n🏠 စုစုပေါင်း ရောက်ရှိနေသော Group အရေအတွက်: `{len(all_groups)}` ခု")
+        return bot.reply_to(message, "❌ Master Owner / Sudo Admin သာ အသုံးပြုနိုင်ပါသည်။")
 
-# 21. Global Broadcast (Owner/Sudo Only)
-@bot.message_handler(commands=['broadcast'])
-def module_broadcast(message):
-    if not is_owner(message.from_user.id):
-        return bot.reply_to(message, "❌ Bot Owner သို့မဟုတ် Sudo Admin သာလျှင် Broadcast ပို့နိုင်ပါသည်။")
+    cmd = message.text.split()[0].replace('/', '').lower()
+    all_groups = db.get_all_groups()
+
+    if cmd in ['stats', 'groups']:
+        return bot.reply_to(message, f"📊 **Bot Current Stats:**\n\n🏠 ရောက်ရှိနေသော Group အရေအတွက်: `{len(all_groups)}` ခု")
 
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        return bot.reply_to(message, "⚠️ **Usage:** `/broadcast <စာသားများ> [Button Title](buttonurl://https://link.com)`")
+        return bot.reply_to(message, "⚠️ **Usage:** `/broadcast <စာသားများ>`")
 
-    raw_text = parts[1]
-    clean_txt, markup = parse_button_links(raw_text)
-
-    all_groups = db.get_all_groups()
-    success = 0
-    failed = 0
-
-    status_msg = bot.reply_to(message, f"📢 Groups ပေါင်း `{len(all_groups)}` ခုသို့ ကြော်ငြာ စတင်ပို့နေပါပြီ...")
+    clean_txt, markup = parse_button_links(parts[1])
+    success, failed = 0, 0
+    status_msg = bot.reply_to(message, f"📢 Groups `{len(all_groups)}` ခုသို့ ပို့နေပါပြီ...")
 
     for g_id in all_groups:
         try:
             bot.send_message(g_id, clean_txt, reply_markup=markup)
             success += 1
-            time.sleep(0.3)
+            time.sleep(0.2)
         except Exception:
             failed += 1
 
-    bot.edit_message_text(f"✅ **Broadcast ပို့ဆောင်ပြီးပါပြီ!**\n\n🎯 အောင်မြင်သည့် Group: `{success}`\n❌ မအောင်မြင်သည့် Group: `{failed}`", message.chat.id, status_msg.message_id)
+    bot.edit_message_text(f"✅ **Broadcast ပို့ဆောင်ပြီးပါပြီ!**\n\n🎯 အောင်မြင်: `{success}`\n❌ မအောင်မြင်: `{failed}`", message.chat.id, status_msg.message_id)
 
-# 19. Help Menu & Callbacks
+# 17. Help & Start Menu
 @bot.message_handler(commands=['start', 'help'])
 def module_help(message):
     main_markup = InlineKeyboardMarkup(row_width=2)
@@ -644,7 +602,7 @@ def module_help(message):
         InlineKeyboardButton("📢 Broadcast & Buttons", callback_data="page_6")
     ]
     main_markup.add(*buttons)
-    bot.reply_to(message, "👋 **Group Management Bot ၏ Commands များကြည့်ရန် အောက်ပါ Button များကို နှိပ်ပါ:**", reply_markup=main_markup)
+    bot.reply_to(message, "👋 **Group Management Bot Commands Menu:**", reply_markup=main_markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('page_'))
 def handle_help_pages(call: CallbackQuery):
@@ -653,13 +611,13 @@ def handle_help_pages(call: CallbackQuery):
     back_markup.add(InlineKeyboardButton("⬅️ ပင်မ Menu သို့", callback_data="page_main"))
 
     pages_content = {
-        "main": "👋 **Group Management Bot ၏ Commands များကြည့်ရန် အောက်ပါ Button များကို နှိပ်ပါ:**",
-        "1": "📌 **Admin & Moderation:**\n\n• `/admin` - Admin စာရင်းကြည့်ရန်\n• `/ban`, `/unban`, `/mute`, `/unmute`, `/kick` - အဖွဲ့ဝင်များကို အရေးယူရန်\n• `/approve`, `/unapprove`, `/approved` - Approval စနစ်",
-        "2": "📌 **Flood & Blocklists:**\n\n• `/setflood <num>` - Flood ကန့်သတ်ရန်\n• `/antiraid on/off` - Anti Raid\n• `/addbad <word>`, `/badwords` - Badwords ပိတ်ရန်\n• `/addblock <item>`, `/blocklist` - Blocklist ပြုလုပ်ရန်",
-        "3": "📌 **Filters & Notes:**\n\n• `/save <note> <text>` - Note သိမ်းရန်\n• `/notes`, `/clear <note>` - Notes ကြည့်/ဖျက်ရန်\n• `/filter <key> <text>` - Filter သတ်မှတ်ရန်\n• `/stop <key>` - Filter ဖျက်ရန်",
-        "4": "📌 **Locks & Misc:**\n\n• `/lock <type>`, `/unlock` - Stickers/Links/Media ပိတ်ရန်\n• `/locks` - ပိတ်ထားသည်များ ကြည့်ရန်\n• `/id`, `/info` - User Info ကြည့်ရန်\n• `/markdown` - Formatting လမ်းညွှန်",
-        "5": "📌 **Rules, Reports & Warns:**\n\n• `/setrules <text>`, `/rules` - Group စည်းကမ်းများ\n• `/report` - Admin သို့ တိုင်ကြားရန်\n• `/warn`, `/warns`, `/resetwarns` - Warning စနစ်",
-        "6": "📌 **Broadcast, Sudo & Buttons Syntax:**\n\n• `/addsudo`, `/rmsudo` - Sudo တိုး/လျှော့ ပြုလုပ်ရန်\n• `/sudolist` - Sudo Admin စာရင်းကြည့်ရန်\n• `/broadcast <text>` - Bot ရှိသော Group အားလုံးသို့ ကြော်ငြာပို့ရန်\n• `/stats`, `/groups` - ရောက်ရှိနေသော Group အရေအတွက် ကြည့်ရန်\n\n🔘 **Button Link ထည့်နည်း:**\n`[ခလုတ်အမည်](buttonurl://https://yourlink.com)`"
+        "main": "👋 **Group Management Bot Commands Menu:**",
+        "1": "📌 **Admin & Moderation:**\n\n• `/admin` - Admin စာရင်း\n• `/ban`, `/unban`, `/mute`, `/unmute`, `/kick`\n• `/approve`, `/unapprove`, `/approved`",
+        "2": "📌 **Flood & Blocklists:**\n\n• `/setflood <num>` - Flood Limit\n• `/antiraid on/off` - Anti Raid\n• `/addbad <word>`, `/badwords` - Badwords ပိတ်ရန်\n• `/addblock <item>`, `/blocklist` - Blocklist",
+        "3": "📌 **Filters & Notes:**\n\n• `/save <note> <text>` - Note သိမ်းရန်\n• `/notes`, `/clear <note>`\n• `/filter <key> <text>` - Filter\n• `/stop <key>`",
+        "4": "📌 **Locks & Misc:**\n\n• `/lock <type>`, `/unlock` - Locks\n• `/locks` - Locked List\n• `/id`, `/info` - User Info\n• `/markdown` - Formatting Guide",
+        "5": "📌 **Rules & Warns:**\n\n• `/setrules <text>`, `/rules`\n• `/report` - Admin တိုင်ရန်\n• `/warn`, `/warns`, `/resetwarns`",
+        "6": "📌 **Broadcast & Sudo:**\n\n• `/addsudo`, `/rmsudo`, `/sudolist`\n• `/broadcast <text>`\n• `/stats`, `/groups`"
     }
 
     text_to_show = pages_content.get(page, "ℹ️ အချက်အလက် မရှိပါ။")
@@ -689,14 +647,13 @@ def global_automation_handler(message):
     chat_id = message.chat.id
     user_id = message.from_user.id
 
-    # Group Chat ID များကို Broadcast/Stats အတွက် အလိုအလျောက် မှတ်သားခြင်း
     if message.chat.type in ['group', 'supergroup']:
         db.add_group(chat_id, message.chat.title)
 
     approved_list = db.get_items("approved", chat_id, "user_id")
     is_user_approved = user_id in approved_list
 
-    # 1. Welcome & Goodbye Messages
+    # 1. Welcome & Goodbye
     if message.content_type == 'new_chat_members':
         welc_text = db.get_setting(chat_id, "welcome_text", None)
         if welc_text:
@@ -723,7 +680,7 @@ def global_automation_handler(message):
             except Exception: pass
             return
 
-    # 3. Disabling Commands Engine
+    # 3. Disabling Commands
     if message.text and message.text.startswith('/'):
         cmd_name = message.text.split()[0].replace('/', '').lower()
         disabled_list = db.get_items("disabled_cmds", chat_id, "command")
@@ -756,7 +713,7 @@ def global_automation_handler(message):
 
             if len(timestamps) >= limit:
                 bot.restrict_chat_member(chat_id, user_id, can_send_messages=False)
-                bot.send_message(chat_id, f"🔇 [{message.from_user.first_name}](tg://user?id={user_id}) စာစောင်များစွာ ဆက်တိုက် ပို့သဖြင့် Mute လိုက်ပါပြီ။")
+                bot.send_message(chat_id, f"🔇 [{message.from_user.first_name}](tg://user?id={user_id}) စာများစွာ ပို့သဖြင့် Mute လိုက်ပါပြီ။")
                 user_flood_tracker[chat_id][user_id] = []
                 return
 
@@ -778,5 +735,5 @@ def global_automation_handler(message):
 # 🚀 8. BOT INFINITY POLLING
 # ==========================================
 if __name__ == '__main__':
-    print("🤖 Fully Loaded Telegram Management Engine Active!")
+    print("🤖 Clean & Stable Telegram Management Engine Active!")
     bot.infinity_polling(skip_pending=True)
