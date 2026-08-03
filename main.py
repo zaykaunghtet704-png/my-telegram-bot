@@ -1,3 +1,11 @@
+import asyncio
+# Python Version အသစ်များအတွက် Event Loop သတ်မှတ်ပေးခြင်း (Fix RuntimeError)
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
 import os
 import time
 import threading
@@ -34,8 +42,6 @@ keep_alive()
 BOT_TOKEN = "8886077155:AAET1U9CXGZtaiIBLYxAutzFKFe-BkQpVno"
 API_ID = 31788996
 API_HASH = "0c6714a879b2b1abba75dc4526521ca8"
-
-# Supabase Database URL ကို Render Environment မှ ယူမည် သို့မဟုတ် ဤနေရာတွင် direct ထည့်နိုင်သည်
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:your_password@db.xxx.supabase.co:5432/postgres")
 
 OWNER_IDS = [7974865879, 7177628115, 8438417346]
@@ -155,7 +161,7 @@ def cmd_addsudo(message):
             target_id = int(parts[1])
 
     if not target_id:
-        return bot.reply_to(message, "⚠️ Sudo ထည့်လိုသော User ကို Reply ပြန်ပါ သို့မဟုတ် ID ရိုက်ထည့်ပါ (ဥပမာ: `/addsudo 12345678`)")
+        return bot.reply_to(message, "⚠️ Sudo ထည့်လိုသော User ကို Reply ပြန်ပါ သို့မဟုတ် ID ရိုက်ထည့်ပါ")
 
     try:
         conn = get_db_connection()
@@ -226,156 +232,8 @@ def cmd_unban(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}")
 
-@bot.message_handler(commands=['mute'])
-def cmd_mute(message):
-    if not is_authorized(message.from_user.id):
-        return bot.reply_to(message, "❌ ခွင့်ပြုချက်မရှိပါ။")
-    if not message.reply_to_message:
-        return bot.reply_to(message, "⚠️ Mute ပိတ်ချင်သော Member ကို Reply ပြန်ပါ။")
-    
-    target = message.reply_to_message.from_user
-    try:
-        bot.restrict_chat_member(message.chat.id, target.id, can_send_messages=False)
-        bot.reply_to(message, f"🔇 [{target.first_name}](tg://user?id={target.id}) ရဲ့ စာရေးခွင့်ကို ပိတ်လိုက်ပါပြီ။")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: {e}")
-
-@bot.message_handler(commands=['unmute'])
-def cmd_unmute(message):
-    if not is_authorized(message.from_user.id):
-        return bot.reply_to(message, "❌ ခွင့်ပြုချက်မရှိပါ။")
-    if not message.reply_to_message:
-        return bot.reply_to(message, "⚠️ Unmute ပေးချင်သော Member ကို Reply ပြန်ပါ။")
-    
-    target = message.reply_to_message.from_user
-    try:
-        bot.restrict_chat_member(message.chat.id, target.id, can_send_messages=True, can_send_media_messages=True, can_send_other_messages=True)
-        bot.reply_to(message, f"🔊 [{target.first_name}](tg://user?id={target.id}) အား စာပြန်ရေးခွင့် ပေးလိုက်ပါပြီ။")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: {e}")
-
 # ==========================================
-# ⚠️ WARNING SYSTEM
-# ==========================================
-@bot.message_handler(commands=['warn'])
-def cmd_warn(message):
-    if not is_authorized(message.from_user.id):
-        return bot.reply_to(message, "❌ ခွင့်ပြုချက်မရှိပါ။")
-    if not message.reply_to_message:
-        return bot.reply_to(message, "⚠️ Warn ပေးချင်သော Member ကို Reply ပြန်ပါ။")
-    
-    target = message.reply_to_message.from_user
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('INSERT INTO warns (chat_id, user_id, count) VALUES (%s, %s, 1) ON CONFLICT (chat_id, user_id) DO UPDATE SET count = warns.count + 1 RETURNING count', (message.chat.id, target.id))
-        warn_count = cursor.fetchone()[0]
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-        if warn_count >= 3:
-            bot.ban_chat_member(message.chat.id, target.id)
-            bot.reply_to(message, f"⚠️ [{target.first_name}](tg://user?id={target.id}) သည် Warn 3 ကြိမ် ပြည့်သွားသဖြင့် Auto Ban ခဲ့ပါသည်။")
-        else:
-            bot.reply_to(message, f"⚠️ [{target.first_name}](tg://user?id={target.id}) အား သတိပေးလိုက်ပါပြီ။ (Warn Count: `{warn_count}/3`)")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Warn Error: {e}")
-
-# ==========================================
-# 📝 NOTES & FILTERS SYSTEM
-# ==========================================
-@bot.message_handler(commands=['save'])
-def cmd_save_note(message):
-    if not is_authorized(message.from_user.id):
-        return bot.reply_to(message, "❌ ခွင့်ပြုချက်မရှိပါ။")
-    parts = message.text.split(maxsplit=2)
-    if len(parts) < 3:
-        return bot.reply_to(message, "⚠️ သုံးနည်း: `/save [notename] [content]`")
-    
-    note_name = parts[1].lower()
-    content = parts[2]
-
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('INSERT INTO notes (chat_id, note_name, content) VALUES (%s, %s, %s) ON CONFLICT (chat_id, note_name) DO UPDATE SET content = EXCLUDED.content', (message.chat.id, note_name, content))
-        conn.commit()
-        cursor.close()
-        conn.close()
-        bot.reply_to(message, f"✅ Note `#{note_name}` အား မှတ်သားလိုက်ပါပြီ။")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: {e}")
-
-@bot.message_handler(commands=['filter'])
-def cmd_add_filter(message):
-    if not is_authorized(message.from_user.id):
-        return bot.reply_to(message, "❌ ခွင့်ပြုချက်မရှိပါ။")
-    parts = message.text.split(maxsplit=2)
-    if len(parts) < 3:
-        return bot.reply_to(message, "⚠️ သုံးနည်း: `/filter [keyword] [reply text]`")
-    
-    keyword = parts[1].lower()
-    reply_text = parts[2]
-
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('INSERT INTO filters (chat_id, keyword, reply_text) VALUES (%s, %s, %s) ON CONFLICT (chat_id, keyword) DO UPDATE SET reply_text = EXCLUDED.reply_text', (message.chat.id, keyword, reply_text))
-        conn.commit()
-        cursor.close()
-        conn.close()
-        bot.reply_to(message, f"🎯 Auto Filter `{keyword}` အား ထည့်သွင်းလိုက်ပါပြီ။")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: {e}")
-
-# ==========================================
-# 📢 BROADCAST & GHOSTS SYSTEM
-# ==========================================
-@bot.message_handler(commands=['broadcast'])
-def cmd_broadcast(message):
-    if not is_authorized(message.from_user.id):
-        return bot.reply_to(message, "❌ ခွင့်ပြုချက်မရှိပါ။")
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        return bot.reply_to(message, "⚠️ သုံးနည်း: `/broadcast [ပို့ချင်သော စာသား]`")
-
-    text = parts[1]
-    bot.reply_to(message, "📢 Broadcast စာပို့ခြင်း စတင်ပါပြီ...")
-
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT user_id FROM users')
-        users = cursor.fetchall()
-        cursor.execute('SELECT chat_id FROM groups')
-        groups = cursor.fetchall()
-        cursor.close()
-        conn.close()
-
-        success_u, success_g = 0, 0
-        for u in users:
-            try:
-                bot.send_message(u[0], f"📢 **Broadcast Message:**\n\n{text}")
-                success_u += 1
-                time.sleep(0.1)
-            except Exception:
-                pass
-
-        for g in groups:
-            try:
-                bot.send_message(g[0], f"📢 **Broadcast Message:**\n\n{text}")
-                success_g += 1
-                time.sleep(0.1)
-            except Exception:
-                pass
-
-        bot.reply_to(message, f"✅ Broadcast ပို့ပြီးပါပြီ!\n\n👤 Users: `{success_u}`\n👥 Groups: `{success_g}`")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Broadcast Error: {e}")
-
-# ==========================================
-# 🔘 START, HELP & CALLBACK
+# 🔘 START, HELP & POLLING
 # ==========================================
 def get_main_help_markup():
     markup = InlineKeyboardMarkup(row_width=3)
@@ -384,12 +242,7 @@ def get_main_help_markup():
         InlineKeyboardButton("📢 Mention/Tag", callback_data="help_mention"),
         InlineKeyboardButton("🔒 Locks", callback_data="help_locks"),
         InlineKeyboardButton("🚫 Bans/Mute", callback_data="help_bans"),
-        InlineKeyboardButton("⚠️ Warnings", callback_data="help_warns"),
-        InlineKeyboardButton("🎯 Auto Filters", callback_data="help_filters"),
-        InlineKeyboardButton("📝 Notes", callback_data="help_notes"),
-        InlineKeyboardButton("📜 Rules", callback_data="help_rules"),
-        InlineKeyboardButton("🧹 Purges/Clean", callback_data="help_purges"),
-        InlineKeyboardButton("📢 Broadcast/Stats", callback_data="help_broadcast")
+        InlineKeyboardButton("⚠️ Warnings", callback_data="help_warns")
     ]
     markup.add(*buttons)
     return markup
@@ -401,7 +254,7 @@ def send_welcome(message):
         save_group(message.chat.id, message.chat.title, message.from_user.id, message.from_user.first_name)
     bot.reply_to(
         message, 
-        "👋 မင်္ဂလာပါ! Rose Bot နှင့် Mention Tag Bot တို့၏ Features များအစုံပါဝင်သော Group Management Bot မှ ကြိုဆိုပါတယ်။", 
+        "👋 မင်္ဂလာပါ! Group Management Bot မှ ကြိုဆိုပါတယ်။", 
         reply_markup=get_main_help_markup()
     )
 
