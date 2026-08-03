@@ -1,9 +1,16 @@
+import asyncio
+
+# Python 3.10+ / 3.14 Event Loop Conflict Solution
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
 import os
 import re
 import time
 import json
 import sqlite3
-import asyncio
 import threading
 from flask import Flask
 import telebot
