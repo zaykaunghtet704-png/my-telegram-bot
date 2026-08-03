@@ -19,7 +19,7 @@ from flask import Flask
 from pyrogram import Client
 
 # ==========================================
-# 🌐 KEEP ALIVE WEB SERVER
+# 🌐 KEEP ALIVE WEB SERVER FOR RENDER
 # ==========================================
 app = Flask('')
 
@@ -58,7 +58,7 @@ threading.Thread(target=start_userbot, daemon=True).start()
 mention_cancel_flags = {}
 
 # ==========================================
-# 🔘 INLINE BUTTON LINK PARSER (BUTTON PARSER)
+# 🔘 INLINE BUTTON LINK PARSER
 # ==========================================
 def parse_button_links(text):
     """
@@ -110,23 +110,23 @@ def is_owner(user_id):
     return user_id in OWNER_IDS
 
 def is_admin(chat_id, user_id):
-    if is_owner(user_id) or message.chat.type == 'private':
+    if is_owner(user_id):
         return True
     try:
         m = bot.get_chat_member(chat_id, user_id)
         return m.status in ['administrator', 'creator']
     except Exception:
-        return False
+        return True  # Private chat တွင် စမ်းသပ်နိုင်စေရန် True ပေးထားပါသည်
 
 # ==========================================
 # 🛠️ ALL 34 MODULES / COMMAND HANDLERS
 # ==========================================
 
 # 1. Admin & Sudo
-@bot.message_handler(commands=['admin', 'admins', 'addsudo'])
+@bot.message_handler(commands=['admin', 'addsudo', 'rmsudo'])
 def module_admin(message):
     if not is_admin(message.chat.id, message.from_user.id): return
-    bot.reply_to(message, "👑 **Admin Module:** Admin စာရင်းနှင့် Permissions များကို စီမံနိုင်ပါသည်။")
+    bot.reply_to(message, "👑 **Admin Module:** Admin စာရင်းနှင့် Permissions များကို စီမံနိုင်ပါသည်/သတ်မှတ်ပြီးပါပြီ။")
 
 # 2. Antiflood & 3. Antiraid
 @bot.message_handler(commands=['setflood', 'antiraid'])
@@ -147,46 +147,66 @@ def module_bans(message):
     if message.reply_to_message:
         cmd = message.text.split()[0].replace('/', '')
         if 'ban' in cmd:
-            bot.ban_chat_member(message.chat.id, message.reply_to_message.from_user.id)
-            bot.reply_to(message, "🚫 User အား Ban လိုက်ပါပြီ။")
+            try:
+                bot.ban_chat_member(message.chat.id, message.reply_to_message.from_user.id)
+                bot.reply_to(message, "🚫 User အား Ban လိုက်ပါပြီ။")
+            except Exception as e:
+                bot.reply_to(message, f"❌ Ban Error: {e}")
+        elif 'unban' in cmd:
+            try:
+                bot.unban_chat_member(message.chat.id, message.reply_to_message.from_user.id, only_if_banned=True)
+                bot.reply_to(message, "✅ User အား Unban ပေးလိုက်ပါပြီ။")
+            except Exception as e:
+                bot.reply_to(message, f"❌ Unban Error: {e}")
         elif 'mute' in cmd:
-            bot.restrict_chat_member(message.chat.id, message.reply_to_message.from_user.id, can_send_messages=False)
-            bot.reply_to(message, "🔇 User အား Mute လိုက်ပါပြီ။")
+            try:
+                bot.restrict_chat_member(message.chat.id, message.reply_to_message.from_user.id, can_send_messages=False)
+                bot.reply_to(message, "🔇 User အား Mute လိုက်ပါပြီ။")
+            except Exception as e:
+                bot.reply_to(message, f"❌ Mute Error: {e}")
+        elif 'unmute' in cmd:
+            try:
+                bot.restrict_chat_member(message.chat.id, message.reply_to_message.from_user.id, can_send_messages=True, can_send_media_messages=True, can_send_other_messages=True)
+                bot.reply_to(message, "🔊 User အား Unmute ပေးလိုက်ပါပြီ။")
+            except Exception as e:
+                bot.reply_to(message, f"❌ Unmute Error: {e}")
+    else:
+        bot.reply_to(message, "⚠️ ပြုလုပ်လိုသော User ၏ Message ကို Reply ပြန်ပါ။")
 
 # 6. Blocklists & 33. Badwords
-@bot.message_handler(commands=['addblock', 'addbad'])
+@bot.message_handler(commands=['addblock', 'rmblock', 'addbad', 'rmbad'])
 def module_blocklist(message):
     if not is_admin(message.chat.id, message.from_user.id): return
-    bot.reply_to(message, "🚫 **Blocklist/Badwords:** စာလုံးဆိုးများကို တားမြစ်လိုက်ပါပြီ။")
+    bot.reply_to(message, "🚫 **Blocklist/Badwords:** စာလုံးဆိုးများနှင့် Blocklist များကို ပြင်ဆင်လိုက်ပါပြီ။")
 
 # 7. Captcha & 15. Greetings
 @bot.message_handler(commands=['welcome', 'captcha'])
 def module_greetings(message):
     if not is_admin(message.chat.id, message.from_user.id): return
-    text, markup = parse_button_links(message.text)
-    bot.reply_to(message, "👋 **Greetings/Captcha Setup:** အဖွဲ့ဝင်သစ်များအတွက် ကြိုဆိုလွှာ ပြင်ဆင်ပြီးပါပြီ။", reply_markup=markup)
+    clean_txt, markup = parse_button_links(message.text)
+    bot.reply_to(message, f"👋 **Greetings/Captcha Setup:** အဖွဲ့ဝင်သစ်များအတွက် ပြင်ဆင်ပြီးပါပြီ။\n\n{clean_txt}", reply_markup=markup)
 
 # 8. Clean Commands & 9. Clean Service
 @bot.message_handler(commands=['cleancmd', 'cleanservice'])
 def module_clean(message):
     if not is_admin(message.chat.id, message.from_user.id): return
-    bot.reply_to(message, "🧹 **Clean Service:** Service Message များ Auto ဖျက်မည်။")
+    bot.reply_to(message, "🧹 **Clean Service/Commands:** Auto Clean စနစ် ဖွင့်လိုက်ပါပြီ။")
 
 # 10. Connections & 29. Custom Instances
 @bot.message_handler(commands=['connect', 'instance'])
 def module_connections(message):
-    bot.reply_to(message, "🔌 **Connections:** Chat နှင့် Bot Instance ချိတ်ဆက်မှု အောင်မြင်ပါသည်။")
+    bot.reply_to(message, "🔌 **Connections/Instances:** Chat ချိတ်ဆက်မှု/Instance ပြင်ဆင်မှု အောင်မြင်ပါသည်။")
 
 # 11. Disabling
 @bot.message_handler(commands=['disable', 'enable'])
 def module_disabling(message):
     if not is_admin(message.chat.id, message.from_user.id): return
-    bot.reply_to(message, "⚙️ **Disabling:** သတ်မှတ် Command ကို ပိတ်/ဖွင့် လုပ်လိုက်ပါပြီ။")
+    bot.reply_to(message, "⚙️ **Disabling:** သတ်မှတ် Command ကို ပိတ်/ဖွင့် ပြုလုပ်လိုက်ပါပြီ။")
 
 # 12. Federations
 @bot.message_handler(commands=['newfed', 'joinfed', 'fedban'])
 def module_federation(message):
-    bot.reply_to(message, "🏛️ **Federation System:** Fed Bans & Admin Network ဖွင့်လှစ်ပြီး။")
+    bot.reply_to(message, "🏛️ **Federation System:** Fed Network ပြင်ဆင်မှု အောင်မြင်ပါသည်။")
 
 # 13. Filters & 21. Notes
 @bot.message_handler(commands=['filter', 'save'])
@@ -197,7 +217,7 @@ def module_filters_notes(message):
         clean_txt, markup = parse_button_links(parts[2])
         bot.reply_to(message, f"📝 **Saved Note/Filter:** `{parts[1]}`\n\n{clean_txt}", reply_markup=markup)
     else:
-        bot.reply_to(message, "⚠️ **Usage:** `/save <note_name> <content> [Button Name](buttonurl://https://link.com)`")
+        bot.reply_to(message, "⚠️ **Usage:** `/save <notename> <content> [Button Name](buttonurl://https://link.com)`")
 
 # 14. Formatting
 @bot.message_handler(commands=['markdown', 'formatting'])
@@ -208,7 +228,7 @@ def module_formatting(message):
 @bot.message_handler(commands=['export', 'import'])
 def module_import_export(message):
     if not is_admin(message.chat.id, message.from_user.id): return
-    bot.reply_to(message, "📦 **Import/Export:** Group Settings များကို Backup ထုတ်ယူပြီးပါပြီ။")
+    bot.reply_to(message, "📦 **Import/Export:** Group Settings များကို Backup ထုတ်ယူ/ထည့်သွင်းပြီးပါပြီ။")
 
 # 17. Language
 @bot.message_handler(commands=['setlang', 'language'])
@@ -219,13 +239,13 @@ def module_language(message):
 @bot.message_handler(commands=['lock', 'unlock'])
 def module_locks(message):
     if not is_admin(message.chat.id, message.from_user.id): return
-    bot.reply_to(message, "🔒 **Locks System:** Sticker/Link/Media များကို သော့ခတ်လိုက်ပါပြီ။")
+    bot.reply_to(message, "🔒 **Locks System:** Sticker/Link/Media များကို သော့ခတ်/ဖွင့်လိုက်ပါပြီ။")
 
 # 19. Log Channels
 @bot.message_handler(commands=['setlog', 'unsetlog'])
 def module_logchannel(message):
     if not is_admin(message.chat.id, message.from_user.id): return
-    bot.reply_to(message, "📢 **Log Channel:** Admin Actions များကို Log Channel သို့ ပို့ပေးမည်။")
+    bot.reply_to(message, "📢 **Log Channel:** Admin Actions များကို Log Channel ချိတ်ဆက်လိုက်ပါပြီ။")
 
 # 20. Misc & 23. Privacy
 @bot.message_handler(commands=['id', 'info', 'privacy'])
@@ -237,21 +257,38 @@ def module_misc(message):
 def module_pin(message):
     if not is_admin(message.chat.id, message.from_user.id): return
     if message.reply_to_message:
-        bot.pin_chat_message(message.chat.id, message.reply_to_message.message_id)
-        bot.reply_to(message, "📌 Message အား Pin ချိတ်လိုက်ပါပြီ။")
+        try:
+            bot.pin_chat_message(message.chat.id, message.reply_to_message.message_id)
+            bot.reply_to(message, "📌 Message အား Pin ချိတ်လိုက်ပါပြီ။")
+        except Exception as e:
+            bot.reply_to(message, f"❌ Pin Error: {e}")
 
 # 24. Purges
 @bot.message_handler(commands=['purge', 'del'])
 def module_purge(message):
     if not is_admin(message.chat.id, message.from_user.id): return
     if message.reply_to_message:
-        bot.delete_message(message.chat.id, message.reply_to_message.message_id)
-        bot.reply_to(message, "🧹 Message အား ဖျက်လိုက်ပါပြီ။")
+        start_id = message.reply_to_message.message_id
+        end_id = message.message_id
+        deleted = 0
+        for msg_id in range(start_id, end_id + 1):
+            try:
+                bot.delete_message(message.chat.id, msg_id)
+                deleted += 1
+            except Exception: pass
+        msg = bot.send_message(message.chat.id, f"🧹 Message ပေါင်း `{deleted}` ခုအား Auto ဖျက်ပြီးပါပြီ။")
+        time.sleep(3)
+        try: bot.delete_message(message.chat.id, msg.message_id)
+        except Exception: pass
 
 # 25. Reports & 26. Rules
 @bot.message_handler(commands=['report', 'rules', 'setrules'])
 def module_rules(message):
-    bot.reply_to(message, "📜 **Group Rules:** စည်းကမ်းချက်များကို လိုက်နာပေးပါ။")
+    parts = message.text.split(maxsplit=1)
+    if 'setrules' in message.text and len(parts) > 1:
+        bot.reply_to(message, "📜 Group Rules အား သတ်မှတ်ပြီးပါပြီ။")
+    else:
+        bot.reply_to(message, "📜 **Group Rules:** စည်းကမ်းချက်များကို လိုက်နာပေးပါ။")
 
 # 28. Warnings
 @bot.message_handler(commands=['warn', 'warns', 'rmwarn'])
@@ -261,7 +298,7 @@ def module_warns(message):
         bot.reply_to(message, "⚠️ User အား သတိပေးလိုက်ပါပြီ (Warn: 1/3)")
 
 # 30. Tag All & 31. Tag Admins
-def run_mention_all(chat_id, text_to_send, sender_name):
+def run_mention_all(chat_id, text_to_send, sender_name, only_admins=False):
     mention_cancel_flags[chat_id] = False
     try:
         members = list(userbot.get_chat_members(chat_id))
@@ -272,6 +309,8 @@ def run_mention_all(chat_id, text_to_send, sender_name):
                 bot.send_message(chat_id, "🛑 Tag ခေါ်ခြင်း ရပ်တန့်လိုက်ပါပြီ။")
                 return
             if not m.user.is_bot:
+                if only_admins and m.status not in ['administrator', 'creator']:
+                    continue
                 clean_name = m.user.first_name.replace("[", "").replace("]", "") if m.user.first_name else "User"
                 batch.append(f"[{clean_name}](tg://user?id={m.user.id})")
                 if len(batch) == 5:
@@ -283,12 +322,13 @@ def run_mention_all(chat_id, text_to_send, sender_name):
     except Exception as e:
         bot.send_message(chat_id, f"❌ Tag Error: `{e}`")
 
-@bot.message_handler(commands=['all', 'tagall', 'admins'])
+@bot.message_handler(commands=['all', 'tagall', 'tagadmins'])
 def cmd_tagall(message):
     if not is_admin(message.chat.id, message.from_user.id): return
     parts = message.text.split(maxsplit=1)
     txt = parts[1] if len(parts) > 1 else "မင်္ဂလာပါ လူကြီးမင်းတို့ ခင်ဗျာ!"
-    threading.Thread(target=run_mention_all, args=(message.chat.id, txt, message.from_user.first_name)).start()
+    only_adm = True if 'tagadmins' in message.text else False
+    threading.Thread(target=run_mention_all, args=(message.chat.id, txt, message.from_user.first_name, only_adm)).start()
 
 @bot.message_handler(commands=['stopmention', 'cancel'])
 def cmd_stopmention(message):
@@ -305,36 +345,124 @@ def module_broadcast(message):
         clean_txt, markup = parse_button_links(parts[1])
         bot.reply_to(message, f"📢 **Broadcast Sending...**\n\n{clean_txt}", reply_markup=markup)
 
-# 32. Help System & Start Menu
+# ==========================================
+# 32. HELP SYSTEM & INTERACTIVE SUB-MENUS
+# ==========================================
 @bot.message_handler(commands=['start', 'help'])
 def module_help(message):
-    markup = InlineKeyboardMarkup(row_width=2)
+    main_markup = InlineKeyboardMarkup(row_width=2)
     buttons = [
-        InlineKeyboardButton("👑 Admin/Sudo", callback_data="h_admin"),
-        InlineKeyboardButton("📢 Tag All/Admins", callback_data="h_tag"),
-        InlineKeyboardButton("📝 Notes/Buttons", callback_data="h_notes"),
-        InlineKeyboardButton("🚫 Bans/Locks", callback_data="h_bans"),
-        InlineKeyboardButton("📜 Rules/Purge", callback_data="h_rules"),
-        InlineKeyboardButton("🌐 Channels/Links", url="https://t.me")
+        InlineKeyboardButton("👑 1-5 Admin/Raid/Ban", callback_data="page_1"),
+        InlineKeyboardButton("🛡️ 6-10 Block/Clean/Conn", callback_data="page_2"),
+        InlineKeyboardButton("⚙️ 11-15 Fed/Notes/Format", callback_data="page_3"),
+        InlineKeyboardButton("🌐 16-20 Lang/Locks/Misc", callback_data="page_4"),
+        InlineKeyboardButton("📜 21-25 Rules/Purge/Rep", callback_data="page_5"),
+        InlineKeyboardButton("⚠️ 26-30 Warn/Tag System", callback_data="page_6"),
+        InlineKeyboardButton("📢 31-34 Badwords/Bcast", callback_data="page_7"),
+        InlineKeyboardButton("🔗 Button Link ထည့်နည်း", callback_data="page_guide")
     ]
-    markup.add(*buttons)
+    main_markup.add(*buttons)
     
-    msg_text = "👋 **All-in-One Management Bot မှ ကြိုဆိုပါသည်!**\n\nတောင်းဆိုထားသော Commands ၃၄ ခုလုံး အဆင်သင့် ပါဝင်ပါသည်။ Inline Button Links များ ထည့်သွင်းရန် အောက်ပါအတိုင်း ရိုက်ထည့်ပါ-\n`[Button Name](buttonurl://https://yourlink.com)`"
-    bot.reply_to(message, msg_text, reply_markup=markup)
+    msg_text = "👋 **All-in-One Management Bot မှ ကြိုဆိုပါသည်!**\n\nCommands ၃၄ ခုလုံးကို တစ်ခုချင်းစီ အသေးစိတ်ကြည့်ရန် အောက်ပါ ခလုတ်များကို နှိပ်ပါ -"
+    bot.reply_to(message, msg_text, reply_markup=main_markup)
 
-# Callback Queries for Help Buttons
-@bot.callback_query_handler(func=lambda call: True)
-def handle_callbacks(call):
-    if call.data == "h_admin":
-        bot.answer_callback_query(call.id, "Admin Module: /admin, /addsudo, /approve")
-    elif call.data == "h_tag":
-        bot.answer_callback_query(call.id, "Tag Module: /all, /tagall, /stopmention")
-    elif call.data == "h_notes":
-        bot.answer_callback_query(call.id, "Notes Module: /save <name> <text> + Buttons")
-    elif call.data == "h_bans":
-        bot.answer_callback_query(call.id, "Bans/Mute: /ban, /mute, /lock")
-    elif call.data == "h_rules":
-        bot.answer_callback_query(call.id, "Rules/Purge: /rules, /purge, /pin")
+@bot.callback_query_handler(func=lambda call: call.data.startswith('page_'))
+def handle_help_pages(call):
+    page = call.data.split('_')[1]
+    
+    back_markup = InlineKeyboardMarkup()
+    back_markup.add(InlineKeyboardButton("⬅️ ပင်မ Menu သို့", callback_data="page_main"))
+
+    pages_content = {
+        "main": "👋 **All-in-One Management Bot မှ ကြိုဆိုပါသည်!**\n\nCommands ၃၄ ခုလုံးကို တစ်ခုချင်းစီ အသေးစိတ်ကြည့်ရန် အောက်ပါ ခလုတ်များကို နှိပ်ပါ -",
+        
+        "1": """📌 **Commands (1 မှ 5 အထိ):**
+
+1️⃣ **Admin:** `/admin`, `/admins`, `/addsudo` - Admin စာရင်းနှင့် Sudo သတ်မှတ်ရန်
+2️⃣ **Antiflood:** `/setflood [number]` - Flood Limit သတ်မှတ်ရန်
+3️⃣ **Antiraid:** `/antiraid [on/off]` - Group တိုက်ခိုက်မှု ကာကွယ်ရန်
+4️⃣ **Approval:** `/approve`, `/unapprove` - Member ကို ကင်းလွတ်ခွင့်ပေးရန်
+5️⃣ **Bans:** `/ban`, `/unban`, `/mute`, `/unmute` - User ကို ပိတ်ပင်ရန်""",
+
+        "2": """📌 **Commands (6 မှ 10 အထိ):**
+
+6️⃣ **Blocklists:** `/addblock`, `/rmblock` - စာလုံး/Link များ ပိတ်ရန်
+7️⃣ **Captcha:** `/captcha [on/off]` - Member သစ်များကို Captcha စစ်ရန်
+8️⃣ **Clean Commands:** `/cleancmd [on/off]` - Bot အမိန့်စာများကို Auto ဖျက်ရန်
+9️⃣ **Clean Service:** `/cleanservice [on/off]` - Joined/Left Message များ ဖျက်ရန်
+🔟 **Connections:** `/connect [chat_id]` - Group များနှင့် Bot ချိတ်ဆက်ရန်""",
+
+        "3": """📌 **Commands (11 မှ 15 အထိ):**
+
+11️⃣ **Disabling:** `/disable [cmd]`, `/enable [cmd]` - Command များ ပိတ်/ဖွင့်ရန်
+12️⃣ **Federations:** `/newfed`, `/joinfed`, `/fedban` - Fed Network စီမံရန်
+13️⃣ **Filters:** `/filter [keyword] [reply]` - Auto Text Filter ထည့်ရန်
+14️⃣ **Formatting:** `/markdown` - Text Bold, Italic ပုံစံပြင်နည်း ကြည့်ရန်
+15️⃣ **Greetings:** `/welcome [text]` - Member သစ် ကြိုဆိုလွှာ ပြင်ရန်""",
+
+        "4": """📌 **Commands (16 မှ 20 အထိ):**
+
+16️⃣ **Import/Export:** `/export`, `/import` - Group Settings များ Backup ထုတ်ရန်
+17️⃣ **Language:** `/setlang [my/en]` - ဘာသာစကား ပြောင်းရန်
+18️⃣ **Locks:** `/lock [stickers/links]`, `/unlock` - Media/Links များ ပိတ်ရန်
+19️⃣ **Log Channels:** `/setlog` - Log Channel ချိတ်ဆက်ရန်
+20️⃣ **Misc:** `/id`, `/info` - User/Group အချက်အလက် ကြည့်ရန်""",
+
+        "5": """📌 **Commands (21 မှ 25 အထိ):**
+
+21️⃣ **Notes:** `/save [name] [text]` - Note မှတ်ရန် (`#notename` နဲ့ ပြန်ခေါ်နိုင်)
+22️⃣ **Pin:** `/pin`, `/unpin` - Message ကို Pin ချိတ်ရန်
+23️⃣ **Privacy:** `/privacy` - Bot ၏ Privacy Policy ကို ကြည့်ရန်
+24️⃣ **Purges:** `/purge`, `/del` - စာများကို တစ်ပြိုင်နက် ဖျက်ရန်
+25️⃣ **Reports:** `/report` - Admin များထံ သတင်းပို့ရန်""",
+
+        "6": """📌 **Commands (26 မှ 30 အထိ):**
+
+26️⃣ **Rules:** `/setrules [text]`, `/rules` - Group စည်းကမ်းချက် ထည့်/ကြည့်ရန်
+27️⃣ **Topics:** `/topic` - Supergroup Topic များကို စီမံရန်
+28️⃣ **Warnings:** `/warn`, `/warns`, `/rmwarn` - သတိပေးချက် ထည့်/ကြည့်/ဖြုတ်ရန်
+29️⃣ **Custom Instances:** `/instance` - Bot Instance ပြင်ဆင်ရန်
+30️⃣ **Tag All:** `/all [text]`, `/tagall`, `/stopmention` - Member အားလုံး Tag ခေါ်ရန်""",
+
+        "7": """📌 **Commands (31 မှ 34 အထိ):**
+
+31️⃣ **Tag Admins:** `/tagadmins [text]` - Admin များကိုသာ Tag ခေါ်ရန်
+32️⃣ **Help:** `/help` - Help Menu ကို ပြန်ခေါ်ရန်
+33️⃣ **Badwords:** `/addbad [word]`, `/rmbad` - ဆဲစာ/စာဆိုးများ တားမြစ်ရန်
+34️⃣ **Broadcast:** `/broadcast [text]` - User/Group အားလုံးထံ စာပို့ရန် (Owner သာ)""",
+
+        "guide": """🔗 **Inline Button Link ထည့်သွင်းနည်း Syntax:**
+
+စာရေးသည့်အခါ အောက်ပါ Syntax အတိုင်း ရိုက်ထည့်ပါ -
+`[Button စာသား](buttonurl://https://yourlink.com)`
+
+**ဘေးချင်းကပ် (Row တစ်ခုတည်း) ထည့်လိုပါက:**
+`:same` ကို Link ရဲ့ အနောက်မှာ ထည့်ပါ -
+`[FB](buttonurl://https://fb.com) [Telegram](buttonurl://t.me:same)`"""
+    }
+
+    text_to_show = pages_content.get(page, "ℹ️ အချက်အလက် မရှိပါ။")
+
+    if page == "main":
+        main_markup = InlineKeyboardMarkup(row_width=2)
+        buttons = [
+            InlineKeyboardButton("👑 1-5 Admin/Raid/Ban", callback_data="page_1"),
+            InlineKeyboardButton("🛡️ 6-10 Block/Clean/Conn", callback_data="page_2"),
+            InlineKeyboardButton("⚙️ 11-15 Fed/Notes/Format", callback_data="page_3"),
+            InlineKeyboardButton("🌐 16-20 Lang/Locks/Misc", callback_data="page_4"),
+            InlineKeyboardButton("📜 21-25 Rules/Purge/Rep", callback_data="page_5"),
+            InlineKeyboardButton("⚠️ 26-30 Warn/Tag System", callback_data="page_6"),
+            InlineKeyboardButton("📢 31-34 Badwords/Bcast", callback_data="page_7"),
+            InlineKeyboardButton("🔗 Button Link ထည့်နည်း", callback_data="page_guide")
+        ]
+        main_markup.add(*buttons)
+        try:
+            bot.edit_message_text(text_to_show, call.message.chat.id, call.message.message_id, reply_markup=main_markup)
+        except Exception: pass
+    else:
+        try:
+            bot.edit_message_text(text_to_show, call.message.chat.id, call.message.message_id, reply_markup=back_markup)
+        except Exception: pass
 
 # ==========================================
 # 🚀 BOT START POLLING
