@@ -8,31 +8,17 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto, CallbackQuery
 
 # ==========================================
-# ⚙️ 1. MAIN CONFIGURATION (ဒီနေရာတွင် အကုန်ပြင်ပါ)
+# ⚙️ 1. MAIN CONFIGURATION
 # ==========================================
 BOT_TOKEN = "8886077155:AAET1U9CXGZtaiIBLYxAutzFKFe-BkQpVno"
 MASTER_OWNERS = [7974865879, 7177628115, 8438417346]
 
-# 🖼️ Bot နာမည်နှင့် ဓာတ်ပုံ Links များ
-BOT_INFO = {
-    "name": "BABY SHARK Doo Doo",
-    # မိမိပြလိုသော ဓာတ်ပုံ Direct Link သို့မဟုတ် Telegraph Link များကို ထည့်ပါ
-    "start_photo": "https://picsum.photos/800/600",
-    "help_photo": "https://picsum.photos/800/601"
-}
+# Default Settings (Bot ကို စစချင်း Default ထားမည့် ပုံနှင့် စာသားများ)
+DEFAULT_BOT_NAME = "BABY SHARK Doo Doo"
+DEFAULT_START_PHOTO = "https://picsum.photos/800/600"
+DEFAULT_HELP_PHOTO = "https://picsum.photos/800/601"
 
-# 🔗 Button နှိပ်လျှင် သွားမည့် Links များ
-LINKS = {
-    "owner": "https://t.me/your_telegram_username",
-    "support": "https://t.me/your_support_group",
-    "channel": "https://t.me/your_channel",
-    "source": "https://github.com/your_github_repo"
-}
-
-# 📝 ပေါ်လာမည့် စာသားများ (Text & Captions)
-# {bot_name}, {user_name}, {uptime} များကို အလိုအလျောက် အစားထိုးပေးမည်ဖြစ်၍ မဖျက်ပါနှင့်။
-TEXTS = {
-    "start_caption": """
+DEFAULT_START_TEXT = """
 ╭━━━〔 **{bot_name}** 〕━━━
 ┃ 🎧 **Music & Management Bot**
 ╰━━━━━━━━━━━━━━━━━━
@@ -47,9 +33,9 @@ I Am The Fast And Powerful Music Player Bot With Some Awesome Features.
 ➥ **RAM CONSUMPTION:** `37.0%`
 -------------------------
 Click On The Help Button To Get Information About My Modules And Commands.
-""",
-    
-    "help_caption": """
+"""
+
+DEFAULT_HELP_TEXT = """
 📖 **Help And Commands Menu**
 
 What can this bot do?
@@ -60,10 +46,17 @@ https://t.me/your_channel
 💙 **ရည်းစားရှာရန် စကားပြောရန် -**
 https://t.me/your_group
 """
+
+# Default Links
+DEFAULT_LINKS = {
+    "owner": "https://t.me/your_telegram_username",
+    "support": "https://t.me/your_support_group",
+    "channel": "https://t.me/your_channel",
+    "source": "https://github.com/your_github_repo"
 }
 
 # ==========================================
-# 🌐 2. KEEP ALIVE WEB SERVER (For Hosting)
+# 🌐 2. KEEP ALIVE WEB SERVER
 # ==========================================
 app = Flask(__name__)
 
@@ -78,7 +71,7 @@ def run_flask():
 threading.Thread(target=run_flask, daemon=True).start()
 
 # ==========================================
-# 🗄️ 3. SQLITE DATABASE ENGINE
+# 🗄️ 3. SQLITE DATABASE ENGINE (WITH GLOBAL BOT SETTINGS)
 # ==========================================
 class Database:
     def __init__(self, db_file="bot_data.db"):
@@ -87,6 +80,13 @@ class Database:
         self.create_tables()
 
     def create_tables(self):
+        # Global Config Table
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS global_config (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+        """)
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             chat_id INTEGER PRIMARY KEY,
@@ -109,6 +109,15 @@ class Database:
         self.cursor.execute("CREATE TABLE IF NOT EXISTS locks (chat_id INTEGER, lock_type TEXT, PRIMARY KEY (chat_id, lock_type))")
         self.cursor.execute("CREATE TABLE IF NOT EXISTS disabled_cmds (chat_id INTEGER, command TEXT, PRIMARY KEY (chat_id, command))")
         self.conn.commit()
+
+    def set_config(self, key, value):
+        self.cursor.execute("INSERT OR REPLACE INTO global_config (key, value) VALUES (?, ?)", (key, str(value)))
+        self.conn.commit()
+
+    def get_config(self, key, default=None):
+        self.cursor.execute("SELECT value FROM global_config WHERE key=?", (key,))
+        res = self.cursor.fetchone()
+        return res[0] if res else default
 
     def add_sudo(self, user_id):
         self.cursor.execute("INSERT OR IGNORE INTO sudos (user_id) VALUES (?)", (user_id,))
@@ -163,6 +172,15 @@ class Database:
         return dict(self.cursor.fetchall())
 
 db = Database()
+
+# Dynamic Data Getters
+def get_bot_name(): return db.get_config("bot_name", DEFAULT_BOT_NAME)
+def get_start_photo(): return db.get_config("start_photo", DEFAULT_START_PHOTO)
+def get_help_photo(): return db.get_config("help_photo", DEFAULT_HELP_PHOTO)
+def get_start_text(): return db.get_config("start_text", DEFAULT_START_TEXT)
+def get_help_text(): return db.get_config("help_text", DEFAULT_HELP_TEXT)
+
+def get_link(key): return db.get_config(f"link_{key}", DEFAULT_LINKS.get(key, ""))
 
 # ==========================================
 # 🔑 4. INITIALIZATION & HELPERS
@@ -221,14 +239,71 @@ def is_command_disabled(message, cmd):
     return False
 
 # ==========================================
-# 🚀 5. START & HELP MENU (PHOTO & BUTTONS)
+# ⚙️ 5. LIVE BOT EDITING COMMANDS (FOR OWNER)
+# ==========================================
+@bot.message_handler(commands=['setstart', 'setstartphoto', 'sethelp', 'sethelpphoto', 'setname', 'setlink'])
+def live_editing_commands(message):
+    if not is_owner(message.from_user.id):
+        return bot.reply_to(message, "❌ Bot Owner သာလျှင် Bot ၏ အချက်အလက်များကို ပြင်ဆင်ခွင့်ရှိပါသည်။")
+
+    cmd = extract_cmd(message.text)
+    parts = message.text.split(maxsplit=1)
+
+    if cmd == 'setstart':
+        if len(parts) < 2 and not message.reply_to_message:
+            return bot.reply_to(message, "⚠️ **Usage:** `/setstart <စာသားများ>` သို့မဟုတ် စာကို Reply ပြန်၍ `/setstart` ရိုက်ပါ။")
+        new_txt = message.reply_to_message.text if message.reply_to_message else parts[1]
+        db.set_config("start_text", new_txt)
+        bot.reply_to(message, "✅ **Start Caption Message အား အသစ်ပြောင်းလဲလိုက်ပါပြီ။**")
+
+    elif cmd == 'sethelp':
+        if len(parts) < 2 and not message.reply_to_message:
+            return bot.reply_to(message, "⚠️ **Usage:** `/sethelp <စာသားများ>` သို့မဟုတ် စာကို Reply ပြန်၍ `/sethelp` ရိုက်ပါ။")
+        new_txt = message.reply_to_message.text if message.reply_to_message else parts[1]
+        db.set_config("help_text", new_txt)
+        bot.reply_to(message, "✅ **Help Caption Message အား အသစ်ပြောင်းလဲလိုက်ပါပြီ။**")
+
+    elif cmd in ['setstartphoto', 'sethelpphoto']:
+        photo_url = None
+        if message.reply_to_message and message.reply_to_message.photo:
+            photo_url = message.reply_to_message.photo[-1].file_id
+        elif len(parts) > 1:
+            photo_url = parts[1].strip()
+
+        if not photo_url:
+            return bot.reply_to(message, "⚠️ ဓာတ်ပုံကို Reply ပြန်၍ Command ရိုက်ပါ သို့မဟုတ် Photo Link / File ID ထည့်ပါ။")
+
+        key = "start_photo" if cmd == 'setstartphoto' else "help_photo"
+        db.set_config(key, photo_url)
+        bot.reply_to(message, f"✅ **{'Start Photo' if cmd == 'setstartphoto' else 'Help Photo'} အား အသစ်ပြောင်းလဲလိုက်ပါပြီ။**")
+
+    elif cmd == 'setname':
+        if len(parts) < 2:
+            return bot.reply_to(message, "⚠️ **Usage:** `/setname <Bot နာမည်>`")
+        db.set_config("bot_name", parts[1])
+        bot.reply_to(message, f"✅ **Bot Name ကို `{parts[1]}` သို့ ပြောင်းလိုက်ပါပြီ။**")
+
+    elif cmd == 'setlink':
+        # Usage: /setlink owner https://t.me/...
+        link_parts = message.text.split(maxsplit=2)
+        if len(link_parts) < 3:
+            return bot.reply_to(message, "⚠️ **Usage:** `/setlink <owner/support/channel/source> <Link>`")
+        target_key = link_parts[1].lower()
+        if target_key not in ['owner', 'support', 'channel', 'source']:
+            return bot.reply_to(message, "❌ Link Type မှားယွင်းနေပါသည်။ (owner, support, channel, source သာ ရနိုင်ပါမည်)")
+        
+        db.set_config(f"link_{target_key}", link_parts[2].strip())
+        bot.reply_to(message, f"✅ **{target_key.capitalize()} Link အား အသစ်ပြောင်းလိုက်ပါပြီ။**")
+
+# ==========================================
+# 🚀 6. START & HELP MENU SYSTEM
 # ==========================================
 def build_start_markup():
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(InlineKeyboardButton("➕ Add Me In Your Group", url=f"https://t.me/{bot.get_me().username}?startgroup=true"))
     markup.add(InlineKeyboardButton("📖 Help And Commands", callback_data="help_menu"))
-    markup.add(InlineKeyboardButton("👤 Owner", url=LINKS["owner"]), InlineKeyboardButton("💬 Support ↗️", url=LINKS["support"]))
-    markup.add(InlineKeyboardButton("📢 Channel ↗️", url=LINKS["channel"]), InlineKeyboardButton("🌐 Source Code ↗️", url=LINKS["source"]))
+    markup.add(InlineKeyboardButton("👤 Owner", url=get_link("owner")), InlineKeyboardButton("💬 Support ↗️", url=get_link("support")))
+    markup.add(InlineKeyboardButton("📢 Channel ↗️", url=get_link("channel")), InlineKeyboardButton("🌐 Source Code ↗️", url=get_link("source")))
     return markup
 
 @bot.message_handler(commands=['start', 'help'])
@@ -237,14 +312,14 @@ def module_start(message):
     user_name = message.from_user.first_name
 
     if cmd == 'start':
-        caption = TEXTS["start_caption"].format(bot_name=BOT_INFO["name"], user_name=user_name, uptime=get_uptime())
+        caption_template = get_start_text()
+        caption = caption_template.format(bot_name=get_bot_name(), user_name=user_name, uptime=get_uptime())
         markup = build_start_markup()
         try:
-            bot.send_photo(message.chat.id, photo=BOT_INFO["start_photo"], caption=caption, reply_markup=markup)
+            bot.send_photo(message.chat.id, photo=get_start_photo(), caption=caption, reply_markup=markup)
         except Exception:
             bot.reply_to(message, caption, reply_markup=markup)
     else:
-        # /help Command ခေါ်သည့်အခါ Module Help List ပြသခြင်း
         main_markup = InlineKeyboardMarkup(row_width=2)
         buttons = [
             InlineKeyboardButton("👑 Admin & Bans", callback_data="page_1"),
@@ -262,19 +337,19 @@ def handle_menu_callbacks(call: CallbackQuery):
     user_name = call.from_user.first_name
 
     if call.data == "help_menu":
-        caption = TEXTS["help_caption"]
+        caption = get_help_text()
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("⬅️ Back", callback_data="back_start"))
         try:
-            media = InputMediaPhoto(BOT_INFO["help_photo"], caption=caption, parse_mode="Markdown")
+            media = InputMediaPhoto(get_help_photo(), caption=caption, parse_mode="Markdown")
             bot.edit_message_media(media=media, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
         except Exception: pass
 
     elif call.data == "back_start":
-        caption = TEXTS["start_caption"].format(bot_name=BOT_INFO["name"], user_name=user_name, uptime=get_uptime())
+        caption = get_start_text().format(bot_name=get_bot_name(), user_name=user_name, uptime=get_uptime())
         markup = build_start_markup()
         try:
-            media = InputMediaPhoto(BOT_INFO["start_photo"], caption=caption, parse_mode="Markdown")
+            media = InputMediaPhoto(get_start_photo(), caption=caption, parse_mode="Markdown")
             bot.edit_message_media(media=media, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
         except Exception: pass
 
@@ -290,7 +365,7 @@ def handle_menu_callbacks(call: CallbackQuery):
             "3": "📌 **Filters & Notes:**\n\n• `/save <note> <text>` - Note သိမ်းရန်\n• `/notes`, `/clear <note>`\n• `/filter <key> <text>` - Filter\n• `/stop <key>`",
             "4": "📌 **Locks & Misc:**\n\n• `/lock <type>`, `/unlock` - Locks\n• `/locks` - Locked List\n• `/id`, `/info` - User Info\n• `/markdown` - Formatting Guide",
             "5": "📌 **Rules & Warns:**\n\n• `/setrules <text>`, `/rules`\n• `/report` - Admin တိုင်ရန်\n• `/warn`, `/warns`, `/resetwarns`",
-            "6": "📌 **Broadcast & Sudo:**\n\n• `/addsudo`, `/rmsudo`, `/sudolist`\n• `/broadcast <text>`\n• `/stats`, `/groups`"
+            "6": "📌 **Broadcast & Edit Bot:**\n\n• `/setstart`, `/setstartphoto` - Start ပြင်ရန်\n• `/sethelp`, `/sethelpphoto` - Help ပြင်ရန်\n• `/setname`, `/setlink` - Info/Links ပြင်ရန်\n• `/broadcast <text>` - Broadcast ပို့ရန်"
         }
         text_to_show = pages_content.get(page, "ℹ️ အချက်အလက် မရှိပါ။")
         try:
@@ -302,7 +377,7 @@ def handle_menu_callbacks(call: CallbackQuery):
                     InlineKeyboardButton("⚙️ Filters & Notes", callback_data="page_3"),
                     InlineKeyboardButton("🌐 Locks & Misc", callback_data="page_4"),
                     InlineKeyboardButton("📜 Rules & Warns", callback_data="page_5"),
-                    InlineKeyboardButton("📢 Broadcast & Buttons", callback_data="page_6")
+                    InlineKeyboardButton("📢 Broadcast & Edit Bot", callback_data="page_6")
                 ]
                 main_markup.add(*buttons)
                 bot.edit_message_text(text_to_show, call.message.chat.id, call.message.message_id, reply_markup=main_markup)
@@ -311,10 +386,8 @@ def handle_menu_callbacks(call: CallbackQuery):
         except Exception: pass
 
 # ==========================================
-# 🛡️ 6. MANAGEMENT COMMAND HANDLERS
+# 🛡️ 7. MANAGEMENT COMMAND HANDLERS
 # ==========================================
-
-# 1. Admin & Sudo Commands
 @bot.message_handler(commands=['admin', 'admins', 'addsudo', 'rmsudo', 'sudolist'])
 def module_admin(message):
     cmd = extract_cmd(message.text)
@@ -355,7 +428,6 @@ def module_admin(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Error: `{e}`")
 
-# 2. Bans & Moderation
 @bot.message_handler(commands=['ban', 'unban', 'mute', 'unmute', 'kick'])
 def module_bans(message):
     cmd = extract_cmd(message.text)
@@ -389,7 +461,6 @@ def module_bans(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Error: `{e}`")
 
-# 3. Antiflood & AntiRaid
 @bot.message_handler(commands=['setflood', 'flood', 'antiraid'])
 def module_antiflood_antiraid(message):
     cmd = extract_cmd(message.text)
@@ -411,7 +482,6 @@ def module_antiflood_antiraid(message):
         curr = db.get_setting(message.chat.id, "flood_limit", 0)
         bot.reply_to(message, f"🛡️ **လက်ရှိ Antiflood Limit:** `{curr}`\nပြောင်းရန်: `/setflood 5` (0 = ပိတ်ရန်)")
 
-# 4. Filters & Notes
 @bot.message_handler(commands=['filter', 'stop', 'save', 'clear', 'notes', 'filters'])
 def module_filters_notes(message):
     cmd = extract_cmd(message.text)
@@ -449,7 +519,6 @@ def module_filters_notes(message):
         db.add_item("filters", chat_id, "keyword", "reply_text", key, content)
         bot.reply_to(message, f"🔍 Filter `{key}` သတ်မှတ်ပြီးပါပြီ။")
 
-# 5. Broadcast & Stats
 @bot.message_handler(commands=['stats', 'groups', 'broadcast'])
 def module_owner_tools(message):
     if not is_owner(message.from_user.id):
@@ -478,7 +547,7 @@ def module_owner_tools(message):
     bot.edit_message_text(f"✅ **Broadcast ပို့ဆောင်ပြီးပါပြီ!**\n\n🎯 အောင်မြင်: `{success}`\n❌ မအောင်မြင်: `{failed}`", message.chat.id, status_msg.message_id)
 
 # ==========================================
-# 🔄 7. AUTOMATION & LISTENER ENGINE
+# 🔄 8. AUTOMATION & LISTENER ENGINE
 # ==========================================
 @bot.message_handler(func=lambda message: not (message.text and message.text.startswith('/')), content_types=['text', 'new_chat_members', 'left_chat_member', 'sticker', 'document', 'photo'])
 def global_automation_handler(message):
@@ -491,7 +560,6 @@ def global_automation_handler(message):
     approved_list = db.get_items("approved", chat_id, "user_id")
     is_user_approved = user_id in approved_list
 
-    # 1. Welcome & Goodbye
     if message.content_type == 'new_chat_members':
         welc_text = db.get_setting(chat_id, "welcome_text", None)
         if welc_text:
@@ -506,7 +574,6 @@ def global_automation_handler(message):
             bot.send_message(chat_id, txt, reply_markup=markup)
         return
 
-    # 2. Locks Enforcement
     if not is_user_approved and not is_admin(chat_id, user_id):
         locks = db.get_items("locks", chat_id, "lock_type")
         if 'stickers' in locks and message.content_type == 'sticker':
@@ -518,7 +585,6 @@ def global_automation_handler(message):
             except Exception: pass
             return
 
-    # 3. Badwords Auto Filter
     if message.text and not is_user_approved:
         text_lower = message.text.lower()
         badwords = db.get_items("badwords", chat_id, "word")
@@ -530,7 +596,6 @@ def global_automation_handler(message):
                     return
                 except Exception: pass
 
-        # 4. Anti-Flood Control
         limit = db.get_setting(chat_id, "flood_limit", 0)
         if limit > 0 and not is_admin(chat_id, user_id):
             now = time.time()
@@ -547,7 +612,6 @@ def global_automation_handler(message):
                 user_flood_tracker[chat_id][user_id] = []
                 return
 
-        # 5. Notes (#notename) & Filters Trigger
         if text_lower.startswith("#"):
             note_key = text_lower[1:]
             notes = db.get_kv_items("notes", chat_id, "note_name", "content")
@@ -562,8 +626,8 @@ def global_automation_handler(message):
                     bot.reply_to(message, txt, reply_markup=markup)
 
 # ==========================================
-# 🚀 8. BOT INFINITY POLLING
+# 🚀 9. BOT INFINITY POLLING
 # ==========================================
 if __name__ == '__main__':
-    print("🤖 Fully Customisable Management Engine Active!")
+    print("🤖 Live Editable Telegram Bot Engine Running!")
     bot.infinity_polling(skip_pending=True)
