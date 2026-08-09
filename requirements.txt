@@ -1,6 +1,2 @@
 pyTelegramBotAPI
-pyrogram
-tgcrypto
-psycopg2-binary
-psutil
-flask
+Flask
