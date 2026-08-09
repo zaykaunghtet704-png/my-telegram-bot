@@ -26,7 +26,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "All Systems & Modules Active & Running!"
+    return "All Group Management Systems Active & Running!"
 
 def run_flask():
     app.run(host='0.0.0.0', port=PORT)
@@ -34,7 +34,7 @@ def run_flask():
 threading.Thread(target=run_flask, daemon=True).start()
 
 # ==========================================
-# 🗄️ 3. DATABASE ENGINE
+# 🗄️ 3. DATABASE ENGINE (SQLite)
 # ==========================================
 class Database:
     def __init__(self):
@@ -126,7 +126,7 @@ class Database:
 
 db = Database()
 
-# Helpers
+# Helper Functions
 def is_owner(user_id):
     return user_id in MASTER_OWNERS
 
@@ -244,7 +244,7 @@ def send_help(message):
 @bot.message_handler(commands=['settings', 'config'])
 def open_settings(message):
     if message.chat.type == 'private':
-        return bot.reply_to(message, "⚠️ Group Chat အတွင်း၌သာ သုံးနိုင်ပါသည် ခင်ဗျာ။")
+        return bot.reply_to(message, "⚠️ Group Chat အတွင်း၌သာ သုံးနိုင်ပါသည်။")
     if not is_admin(message.chat.id, message.from_user.id):
         return bot.reply_to(message, "❌ Group Admin သာလျှင် Settings ပြင်ဆင်ခွင့်ရှိပါသည်။")
 
@@ -319,7 +319,7 @@ def del_bad(message):
         bot.reply_to(message, f"✅ Word `{parts[1]}` removed from Banned Words.")
 
 # ==========================================
-# 🧩 6. CAPTCHA & NEW MEMBERS
+# 🧩 6. CAPTCHA & NEW MEMBERS LOGIC
 # ==========================================
 @bot.message_handler(content_types=['new_chat_members'])
 def handle_new_member(message):
@@ -424,7 +424,7 @@ def handle_callbacks(call: CallbackQuery):
         bot.answer_callback_query(call.id, f"ℹ️ {feature} module is currently monitoring this group.", show_alert=True)
 
 # ==========================================
-# 🛡️ 8. AUTOMATION, FLOOD & FILTERS
+# 🛡️ 8. AUTOMATION, SPAM & FILTERS
 # ==========================================
 user_flood_tracker = {}
 
@@ -457,13 +457,13 @@ def global_message_listener(message):
     if message.chat.type == 'private' or is_admin(chat_id, user_id): return
     if check_flood_and_spam(message): return
 
-    # Link Block
+    # Link Lock Check
     if db.get_setting(chat_id, "links") and message.text:
         if any(domain in message.text.lower() for domain in ["http://", "https://", "t.me/", "telegram.me"]):
             try: bot.delete_message(chat_id, message.message_id); return
             except Exception: pass
 
-    # Banned Words
+    # Banned Words Check
     if message.text:
         text_l = message.text.lower()
         for bad in db.get_badwords(chat_id):
@@ -471,12 +471,12 @@ def global_message_listener(message):
                 try: bot.delete_message(chat_id, message.message_id); return
                 except Exception: pass
 
-    # Sticker Lock
+    # Sticker Lock Check
     if db.get_setting(chat_id, "stickers") and message.content_type == 'sticker':
         try: bot.delete_message(chat_id, message.message_id); return
         except Exception: pass
 
-    # Media Lock
+    # Media Lock Check
     if db.get_setting(chat_id, "media") and message.content_type in ['photo', 'video', 'document', 'audio']:
         try: bot.delete_message(chat_id, message.message_id); return
         except Exception: pass
@@ -503,7 +503,7 @@ def night_mode_scheduler():
 threading.Thread(target=night_mode_scheduler, daemon=True).start()
 
 # ==========================================
-# 🏃‍♂️ BOT EXECUTION
+# 🏃‍♂️ BOT EXECUTION ENTRY
 # ==========================================
 if __name__ == '__main__':
     print("🤖 Full Group Help Engine Running Active...")
