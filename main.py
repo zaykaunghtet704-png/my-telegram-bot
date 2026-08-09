@@ -1,227 +1,134 @@
 import os
+import random
 import re
-import time
 import sqlite3
 import threading
+import time
+from datetime import datetime
 from flask import Flask
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto, CallbackQuery
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
 # ==========================================
-# ⚙️ 1. MAIN CONFIGURATION
+# ⚙️ 1. CONFIGURATION
 # ==========================================
 BOT_TOKEN = "8886077155:AAET1U9CXGZtaiIBLYxAutzFKFe-BkQpVno"
 MASTER_OWNERS = [7974865879, 7177628115, 8438417346]
+DB_NAME = "group_bot_data.db"
+PORT = int(os.environ.get("PORT", 8080))
 
-# Default Settings (Bot ကို စစချင်း Default ထားမည့် ပုံနှင့် စာသားများ)
-DEFAULT_BOT_NAME = "BABY SHARK Doo Doo"
-DEFAULT_START_PHOTO = "https://picsum.photos/800/600"
-DEFAULT_HELP_PHOTO = "https://picsum.photos/800/601"
-
-DEFAULT_START_TEXT = """
-╭━━━〔 **{bot_name}** 〕━━━
-┃ 🎧 **Music & Management Bot**
-╰━━━━━━━━━━━━━━━━━━
-
-**Holaa {user_name} (ကဒ်မယူနဲ့နော်ယူ)** !!
-
-I Am The Fast And Powerful Music Player Bot With Some Awesome Features.
--------------------------
-➥ **UPTIME:** `{uptime}`
-➥ **SERVER STORAGE:** `50.2%`
-➥ **CPU LOAD:** `34.6%`
-➥ **RAM CONSUMPTION:** `37.0%`
--------------------------
-Click On The Help Button To Get Information About My Modules And Commands.
-"""
-
-DEFAULT_HELP_TEXT = """
-📖 **Help And Commands Menu**
-
-What can this bot do?
-
-📝 **စာတိုချစ်သူများ Join -**
-https://t.me/your_channel
-
-💙 **ရည်းစားရှာရန် စကားပြောရန် -**
-https://t.me/your_group
-"""
-
-# Default Links
-DEFAULT_LINKS = {
-    "owner": "https://t.me/your_telegram_username",
-    "support": "https://t.me/your_support_group",
-    "channel": "https://t.me/your_channel",
-    "source": "https://github.com/your_github_repo"
-}
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
 
 # ==========================================
-# 🌐 2. KEEP ALIVE WEB SERVER
+# 🌐 2. KEEP ALIVE WEB SERVER (FLASK)
 # ==========================================
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "All-in-One Telegram Bot Engine is Running!"
+    return "All Systems & Modules Active & Running!"
 
 def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=PORT)
 
 threading.Thread(target=run_flask, daemon=True).start()
 
 # ==========================================
-# 🗄️ 3. SQLITE DATABASE ENGINE (WITH GLOBAL BOT SETTINGS)
+# 🗄️ 3. DATABASE ENGINE
 # ==========================================
 class Database:
-    def __init__(self, db_file="bot_data.db"):
-        self.conn = sqlite3.connect(db_file, check_same_thread=False)
+    def __init__(self):
+        self.conn = sqlite3.connect(DB_NAME, check_same_thread=False)
         self.cursor = self.conn.cursor()
-        self.create_tables()
+        self.setup()
 
-    def create_tables(self):
-        # Global Config Table
-        self.cursor.execute("""
-        CREATE TABLE IF NOT EXISTS global_config (
-            key TEXT PRIMARY KEY,
-            value TEXT
-        )
-        """)
+    def setup(self):
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             chat_id INTEGER PRIMARY KEY,
-            welcome_text TEXT,
-            goodbye_text TEXT,
-            rules_text TEXT,
-            flood_limit INTEGER DEFAULT 0,
-            antiraid INTEGER DEFAULT 0,
-            disabled_reports INTEGER DEFAULT 0
-        )
-        """)
-        self.cursor.execute("CREATE TABLE IF NOT EXISTS groups (chat_id INTEGER PRIMARY KEY, chat_title TEXT)")
-        self.cursor.execute("CREATE TABLE IF NOT EXISTS sudos (user_id INTEGER PRIMARY KEY)")
-        self.cursor.execute("CREATE TABLE IF NOT EXISTS filters (chat_id INTEGER, keyword TEXT, reply_text TEXT, PRIMARY KEY (chat_id, keyword))")
-        self.cursor.execute("CREATE TABLE IF NOT EXISTS notes (chat_id INTEGER, note_name TEXT, content TEXT, PRIMARY KEY (chat_id, note_name))")
-        self.cursor.execute("CREATE TABLE IF NOT EXISTS badwords (chat_id INTEGER, word TEXT, PRIMARY KEY (chat_id, word))")
-        self.cursor.execute("CREATE TABLE IF NOT EXISTS blocklists (chat_id INTEGER, item TEXT, PRIMARY KEY (chat_id, item))")
-        self.cursor.execute("CREATE TABLE IF NOT EXISTS approved (chat_id INTEGER, user_id INTEGER, PRIMARY KEY (chat_id, user_id))")
-        self.cursor.execute("CREATE TABLE IF NOT EXISTS warns (chat_id INTEGER, user_id INTEGER, count INTEGER DEFAULT 0, PRIMARY KEY (chat_id, user_id))")
-        self.cursor.execute("CREATE TABLE IF NOT EXISTS locks (chat_id INTEGER, lock_type TEXT, PRIMARY KEY (chat_id, lock_type))")
-        self.cursor.execute("CREATE TABLE IF NOT EXISTS disabled_cmds (chat_id INTEGER, command TEXT, PRIMARY KEY (chat_id, command))")
+            welcome INTEGER DEFAULT 1, goodbye INTEGER DEFAULT 1,
+            antispam INTEGER DEFAULT 1, antiflood INTEGER DEFAULT 1,
+            captcha INTEGER DEFAULT 0, porn INTEGER DEFAULT 1,
+            night INTEGER DEFAULT 0, links INTEGER DEFAULT 0,
+            stickers INTEGER DEFAULT 0, media INTEGER DEFAULT 0,
+            approval INTEGER DEFAULT 0, tag INTEGER DEFAULT 1,
+            msg_length INTEGER DEFAULT 0, night_start TEXT DEFAULT '22:00',
+            night_end TEXT DEFAULT '06:00'
+        )""")
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS badwords (
+            chat_id INTEGER, word TEXT, PRIMARY KEY (chat_id, word)
+        )""")
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS warns (
+            chat_id INTEGER, user_id INTEGER, count INTEGER DEFAULT 0,
+            PRIMARY KEY (chat_id, user_id)
+        )""")
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pending_captcha (
+            chat_id INTEGER, user_id INTEGER, answer INTEGER,
+            PRIMARY KEY (chat_id, user_id)
+        )""")
         self.conn.commit()
 
-    def set_config(self, key, value):
-        self.cursor.execute("INSERT OR REPLACE INTO global_config (key, value) VALUES (?, ?)", (key, str(value)))
-        self.conn.commit()
-
-    def get_config(self, key, default=None):
-        self.cursor.execute("SELECT value FROM global_config WHERE key=?", (key,))
+    def get_setting(self, chat_id, key):
+        self.cursor.execute(f"SELECT {key} FROM settings WHERE chat_id=?", (chat_id,))
         res = self.cursor.fetchone()
-        return res[0] if res else default
-
-    def add_sudo(self, user_id):
-        self.cursor.execute("INSERT OR IGNORE INTO sudos (user_id) VALUES (?)", (user_id,))
-        self.conn.commit()
-
-    def remove_sudo(self, user_id):
-        self.cursor.execute("DELETE FROM sudos WHERE user_id=?", (user_id,))
-        self.conn.commit()
-
-    def get_sudos(self):
-        self.cursor.execute("SELECT user_id FROM sudos")
-        return [r[0] for r in self.cursor.fetchall()]
-
-    def add_group(self, chat_id, title):
-        self.cursor.execute("INSERT OR REPLACE INTO groups (chat_id, chat_title) VALUES (?, ?)", (chat_id, title))
-        self.conn.commit()
-
-    def get_all_groups(self):
-        self.cursor.execute("SELECT chat_id FROM groups")
-        return [r[0] for r in self.cursor.fetchall()]
-
-    def set_setting(self, chat_id, column, value):
-        allowed_cols = ["welcome_text", "goodbye_text", "rules_text", "flood_limit", "antiraid", "disabled_reports"]
-        if column in allowed_cols:
-            self.cursor.execute(f"INSERT INTO settings (chat_id, {column}) VALUES (?, ?) ON CONFLICT(chat_id) DO UPDATE SET {column}=?", (chat_id, value, value))
+        if not res:
+            self.cursor.execute("INSERT INTO settings (chat_id) VALUES (?)", (chat_id,))
             self.conn.commit()
+            return 1 if key in ['welcome', 'goodbye', 'antispam', 'antiflood', 'porn', 'tag'] else 0
+        return res[0]
 
-    def get_setting(self, chat_id, column, default=None):
-        allowed_cols = ["welcome_text", "goodbye_text", "rules_text", "flood_limit", "antiraid", "disabled_reports"]
-        if column not in allowed_cols: return default
-        self.cursor.execute(f"SELECT {column} FROM settings WHERE chat_id=?", (chat_id,))
-        res = self.cursor.fetchone()
-        return res[0] if res and res[0] is not None else default
+    def toggle_setting(self, chat_id, key):
+        cur = self.get_setting(chat_id, key)
+        new_val = 0 if cur == 1 else 1
+        self.cursor.execute(f"UPDATE settings SET {key}=? WHERE chat_id=?", (new_val, chat_id))
+        self.conn.commit()
+        return new_val
 
-    def add_item(self, table, chat_id, key_col, val_col, key_val, val_val=None):
-        if val_col:
-            self.cursor.execute(f"INSERT OR REPLACE INTO {table} (chat_id, {key_col}, {val_col}) VALUES (?, ?, ?)", (chat_id, key_val, val_val))
-        else:
-            self.cursor.execute(f"INSERT OR IGNORE INTO {table} (chat_id, {key_col}) VALUES (?, ?)", (chat_id, key_val))
+    def add_badword(self, chat_id, word):
+        self.cursor.execute("INSERT OR IGNORE INTO badwords VALUES (?, ?)", (chat_id, word.lower()))
         self.conn.commit()
 
-    def remove_item(self, table, chat_id, key_col, key_val):
-        self.cursor.execute(f"DELETE FROM {table} WHERE chat_id=? AND {key_col}=?", (chat_id, key_val))
+    def del_badword(self, chat_id, word):
+        self.cursor.execute("DELETE FROM badwords WHERE chat_id=? AND word=?", (chat_id, word.lower()))
         self.conn.commit()
 
-    def get_items(self, table, chat_id, col):
-        self.cursor.execute(f"SELECT {col} FROM {table} WHERE chat_id=?", (chat_id,))
+    def get_badwords(self, chat_id):
+        self.cursor.execute("SELECT word FROM badwords WHERE chat_id=?", (chat_id,))
         return [r[0] for r in self.cursor.fetchall()]
 
-    def get_kv_items(self, table, chat_id, k_col, v_col):
-        self.cursor.execute(f"SELECT {k_col}, {v_col} FROM {table} WHERE chat_id=?", (chat_id,))
-        return dict(self.cursor.fetchall())
+    def add_warn(self, chat_id, user_id):
+        self.cursor.execute("SELECT count FROM warns WHERE chat_id=? AND user_id=?", (chat_id, user_id))
+        res = self.cursor.fetchone()
+        cnt = (res[0] + 1) if res else 1
+        self.cursor.execute("INSERT OR REPLACE INTO warns VALUES (?, ?, ?)", (chat_id, user_id, cnt))
+        self.conn.commit()
+        return cnt
+
+    def reset_warns(self, chat_id, user_id):
+        self.cursor.execute("DELETE FROM warns WHERE chat_id=? AND user_id=?", (chat_id, user_id))
+        self.conn.commit()
+
+    def add_captcha(self, chat_id, user_id, ans):
+        self.cursor.execute("INSERT OR REPLACE INTO pending_captcha VALUES (?, ?, ?)", (chat_id, user_id, ans))
+        self.conn.commit()
+
+    def get_captcha(self, chat_id, user_id):
+        self.cursor.execute("SELECT answer FROM pending_captcha WHERE chat_id=? AND user_id=?", (chat_id, user_id))
+        res = self.cursor.fetchone()
+        return res[0] if res else None
+
+    def remove_captcha(self, chat_id, user_id):
+        self.cursor.execute("DELETE FROM pending_captcha WHERE chat_id=? AND user_id=?", (chat_id, user_id))
+        self.conn.commit()
 
 db = Database()
 
-# Dynamic Data Getters
-def get_bot_name(): return db.get_config("bot_name", DEFAULT_BOT_NAME)
-def get_start_photo(): return db.get_config("start_photo", DEFAULT_START_PHOTO)
-def get_help_photo(): return db.get_config("help_photo", DEFAULT_HELP_PHOTO)
-def get_start_text(): return db.get_config("start_text", DEFAULT_START_TEXT)
-def get_help_text(): return db.get_config("help_text", DEFAULT_HELP_TEXT)
-
-def get_link(key): return db.get_config(f"link_{key}", DEFAULT_LINKS.get(key, ""))
-
-# ==========================================
-# 🔑 4. INITIALIZATION & HELPERS
-# ==========================================
-bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
-BOT_START_TIME = time.time()
-user_flood_tracker = {}
-
-def get_uptime():
-    uptime_seconds = int(time.time() - BOT_START_TIME)
-    hours, remainder = divmod(uptime_seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    return f"{hours}h:{minutes}m:{seconds}s"
-
-def extract_cmd(text):
-    return text.split()[0].replace('/', '').split('@')[0].lower()
-
-def parse_button_links(text):
-    if not text: return "", None
-    pattern = r'\[([^\]]+)\]\(buttonurl://([^\)]+)\)'
-    buttons = re.findall(pattern, text)
-    clean_text = re.sub(pattern, '', text).strip()
-    if not buttons: return clean_text, None
-
-    markup = InlineKeyboardMarkup()
-    row = []
-    for btn_name, btn_url in buttons:
-        same_row = False
-        if btn_url.endswith(':same'):
-            btn_url = btn_url[:-5]
-            same_row = True
-        button = InlineKeyboardButton(text=btn_name, url=btn_url)
-        if same_row and row: row.append(button)
-        else:
-            if row: markup.add(*row)
-            row = [button]
-    if row: markup.add(*row)
-    return clean_text, markup
-
+# Helpers
 def is_owner(user_id):
-    return (user_id in MASTER_OWNERS) or (user_id in db.get_sudos())
+    return user_id in MASTER_OWNERS
 
 def is_admin(chat_id, user_id):
     if is_owner(user_id) or chat_id == user_id: return True
@@ -230,404 +137,374 @@ def is_admin(chat_id, user_id):
         return m.status in ['administrator', 'creator']
     except Exception: return False
 
-def is_command_disabled(message, cmd):
-    if message.chat.type in ['group', 'supergroup']:
-        disabled_list = db.get_items("disabled_cmds", message.chat.id, "command")
-        if cmd in disabled_list and not is_admin(message.chat.id, message.from_user.id):
-            bot.reply_to(message, "❌ ဒီ Command အား Admin မှ ပိတ်ထားပါသည်။")
-            return True
-    return False
-
 # ==========================================
-# ⚙️ 5. LIVE BOT EDITING COMMANDS (FOR OWNER)
+# 🎛️ 4. DASHBOARD UI BUILDERS
 # ==========================================
-@bot.message_handler(commands=['setstart', 'setstartphoto', 'sethelp', 'sethelpphoto', 'setname', 'setlink'])
-def live_editing_commands(message):
-    if not is_owner(message.from_user.id):
-        return bot.reply_to(message, "❌ Bot Owner သာလျှင် Bot ၏ အချက်အလက်များကို ပြင်ဆင်ခွင့်ရှိပါသည်။")
+def build_settings_page_1(chat_id):
+    wel = "✅" if db.get_setting(chat_id, "welcome") else "❌"
+    gb = "✅" if db.get_setting(chat_id, "goodbye") else "❌"
+    aspam = "✅" if db.get_setting(chat_id, "antispam") else "❌"
+    aflood = "✅" if db.get_setting(chat_id, "antiflood") else "❌"
+    cap = "✅" if db.get_setting(chat_id, "captcha") else "❌"
+    porn = "✅" if db.get_setting(chat_id, "porn") else "❌"
+    night = "✅" if db.get_setting(chat_id, "night") else "❌"
+    links = "✅" if db.get_setting(chat_id, "links") else "❌"
+    appr = "✅" if db.get_setting(chat_id, "approval") else "❌"
 
-    cmd = extract_cmd(message.text)
-    parts = message.text.split(maxsplit=1)
-
-    if cmd == 'setstart':
-        if len(parts) < 2 and not message.reply_to_message:
-            return bot.reply_to(message, "⚠️ **Usage:** `/setstart <စာသားများ>` သို့မဟုတ် စာကို Reply ပြန်၍ `/setstart` ရိုက်ပါ။")
-        new_txt = message.reply_to_message.text if message.reply_to_message else parts[1]
-        db.set_config("start_text", new_txt)
-        bot.reply_to(message, "✅ **Start Caption Message အား အသစ်ပြောင်းလဲလိုက်ပါပြီ။**")
-
-    elif cmd == 'sethelp':
-        if len(parts) < 2 and not message.reply_to_message:
-            return bot.reply_to(message, "⚠️ **Usage:** `/sethelp <စာသားများ>` သို့မဟုတ် စာကို Reply ပြန်၍ `/sethelp` ရိုက်ပါ။")
-        new_txt = message.reply_to_message.text if message.reply_to_message else parts[1]
-        db.set_config("help_text", new_txt)
-        bot.reply_to(message, "✅ **Help Caption Message အား အသစ်ပြောင်းလဲလိုက်ပါပြီ။**")
-
-    elif cmd in ['setstartphoto', 'sethelpphoto']:
-        photo_url = None
-        if message.reply_to_message and message.reply_to_message.photo:
-            photo_url = message.reply_to_message.photo[-1].file_id
-        elif len(parts) > 1:
-            photo_url = parts[1].strip()
-
-        if not photo_url:
-            return bot.reply_to(message, "⚠️ ဓာတ်ပုံကို Reply ပြန်၍ Command ရိုက်ပါ သို့မဟုတ် Photo Link / File ID ထည့်ပါ။")
-
-        key = "start_photo" if cmd == 'setstartphoto' else "help_photo"
-        db.set_config(key, photo_url)
-        bot.reply_to(message, f"✅ **{'Start Photo' if cmd == 'setstartphoto' else 'Help Photo'} အား အသစ်ပြောင်းလဲလိုက်ပါပြီ။**")
-
-    elif cmd == 'setname':
-        if len(parts) < 2:
-            return bot.reply_to(message, "⚠️ **Usage:** `/setname <Bot နာမည်>`")
-        db.set_config("bot_name", parts[1])
-        bot.reply_to(message, f"✅ **Bot Name ကို `{parts[1]}` သို့ ပြောင်းလိုက်ပါပြီ။**")
-
-    elif cmd == 'setlink':
-        # Usage: /setlink owner https://t.me/...
-        link_parts = message.text.split(maxsplit=2)
-        if len(link_parts) < 3:
-            return bot.reply_to(message, "⚠️ **Usage:** `/setlink <owner/support/channel/source> <Link>`")
-        target_key = link_parts[1].lower()
-        if target_key not in ['owner', 'support', 'channel', 'source']:
-            return bot.reply_to(message, "❌ Link Type မှားယွင်းနေပါသည်။ (owner, support, channel, source သာ ရနိုင်ပါမည်)")
-        
-        db.set_config(f"link_{target_key}", link_parts[2].strip())
-        bot.reply_to(message, f"✅ **{target_key.capitalize()} Link အား အသစ်ပြောင်းလိုက်ပါပြီ။**")
-
-# ==========================================
-# 🚀 6. START & HELP MENU SYSTEM
-# ==========================================
-def build_start_markup():
     markup = InlineKeyboardMarkup(row_width=2)
-    markup.add(InlineKeyboardButton("➕ Add Me In Your Group", url=f"https://t.me/{bot.get_me().username}?startgroup=true"))
-    markup.add(InlineKeyboardButton("📖 Help And Commands", callback_data="help_menu"))
-    markup.add(InlineKeyboardButton("👤 Owner", url=get_link("owner")), InlineKeyboardButton("💬 Support ↗️", url=get_link("support")))
-    markup.add(InlineKeyboardButton("📢 Channel ↗️", url=get_link("channel")), InlineKeyboardButton("🌐 Source Code ↗️", url=get_link("source")))
+    markup.add(
+        InlineKeyboardButton("📜 Regulation", callback_data="btn_Regulation"),
+        InlineKeyboardButton(f"📧 Anti-Spam {aspam}", callback_data="toggle_antispam"),
+        InlineKeyboardButton(f"💬 Welcome {wel}", callback_data="toggle_welcome"),
+        InlineKeyboardButton(f"🗣️ Anti-Flood {aflood}", callback_data="toggle_antiflood"),
+        InlineKeyboardButton(f"👋 Goodbye {gb}", callback_data="toggle_goodbye"),
+        InlineKeyboardButton("🕉️ Alphabets", callback_data="btn_Alphabets"),
+        InlineKeyboardButton(f"🧠 Captcha {cap}", callback_data="toggle_captcha"),
+        InlineKeyboardButton("🔦 Checks", callback_data="btn_Checks"),
+        InlineKeyboardButton("🆘 @Admin", callback_data="btn_AdminTag"),
+        InlineKeyboardButton("🔐 Blocks", callback_data="btn_Blocks"),
+        InlineKeyboardButton("📸 Media", callback_data="btn_Media"),
+        InlineKeyboardButton(f"🔞 Porn {porn}", callback_data="toggle_porn"),
+        InlineKeyboardButton("❗ Warns", callback_data="btn_Warns"),
+        InlineKeyboardButton(f"🌙 Night {night}", callback_data="toggle_night"),
+        InlineKeyboardButton("🔔 Tag", callback_data="btn_Tag"),
+        InlineKeyboardButton(f"🔗 Link {links}", callback_data="toggle_links")
+    )
+    markup.add(InlineKeyboardButton("🕵️ Guardian Bot 🆕", callback_data="btn_Guardian"))
+    markup.add(InlineKeyboardButton(f"📑 Approval mode {appr}", callback_data="toggle_approval"))
+    markup.add(InlineKeyboardButton("🗑️ Deleting Messages", callback_data="btn_Deleting"))
+    markup.row(
+        InlineKeyboardButton("🇬🇧 Lang", callback_data="btn_lang"),
+        InlineKeyboardButton("✅ Close", callback_data="close_menu"),
+        InlineKeyboardButton("▶️ Other", callback_data="page_2")
+    )
     return markup
 
+def build_settings_page_2(chat_id):
+    stickers = "✅" if db.get_setting(chat_id, "stickers") else "❌"
+    media = "✅" if db.get_setting(chat_id, "media") else "❌"
+
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        InlineKeyboardButton("📁 Topic", callback_data="btn_Topic"),
+        InlineKeyboardButton("🔤 Banned Words", callback_data="show_badwords"),
+        InlineKeyboardButton("⏰ Recurring messages", callback_data="btn_Recurring"),
+        InlineKeyboardButton("👥 Members Management", callback_data="btn_Members"),
+        InlineKeyboardButton("😷 Masked users", callback_data="btn_Masked"),
+        InlineKeyboardButton("📣 Discussion group 🆕", callback_data="btn_Discussion"),
+        InlineKeyboardButton("📱 Personal Commands", callback_data="btn_PersonalCommands"),
+        InlineKeyboardButton(f"🎭 Magic Stickers&GIFs {stickers}", callback_data="toggle_stickers"),
+        InlineKeyboardButton(f"📷 Media Protection {media}", callback_data="toggle_media"),
+        InlineKeyboardButton("✏️ Message length", callback_data="btn_MsgLength"),
+        InlineKeyboardButton("📢 Channels management 🆕", callback_data="btn_Channels")
+    )
+    markup.row(
+        InlineKeyboardButton("✏️ Permissions", callback_data="btn_Permissions"),
+        InlineKeyboardButton("🔍 Log Channel", callback_data="btn_LogChannel")
+    )
+    markup.row(
+        InlineKeyboardButton("◀️ Back", callback_data="page_1"),
+        InlineKeyboardButton("✅ Close", callback_data="close_menu"),
+        InlineKeyboardButton("🇬🇧 Lang", callback_data="btn_lang")
+    )
+    return markup
+
+def build_help_menu():
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(InlineKeyboardButton("➕ Add me to a Group ➕", url="https://t.me/your_bot_username?startgroup=true"))
+    markup.add(InlineKeyboardButton("⚙️ Manage group Settings ✍️", callback_data="open_settings_msg"))
+    markup.add(
+        InlineKeyboardButton("👥 Group ↗️", callback_data="btn_Group"),
+        InlineKeyboardButton("Channel 📢 ↗️", callback_data="btn_Channel")
+    )
+    markup.add(
+        InlineKeyboardButton("🚨 Support", callback_data="btn_Support"),
+        InlineKeyboardButton("Information 💬", callback_data="btn_Info")
+    )
+    markup.add(InlineKeyboardButton("🇬🇧 Languages 🇬🇧", callback_data="btn_lang"))
+    markup.add(
+        InlineKeyboardButton("👤 Basic commands", callback_data="cmd_basic"),
+        InlineKeyboardButton("Advanced 👩‍🔬", callback_data="cmd_adv")
+    )
+    markup.add(
+        InlineKeyboardButton("🤠 Experts", callback_data="cmd_exp"),
+        InlineKeyboardButton("Pro Guides 🧔‍♂️", callback_data="cmd_pro")
+    )
+    markup.add(InlineKeyboardButton("👾 How to create a Clone", callback_data="btn_Clone"))
+    markup.add(InlineKeyboardButton("◀️ Back", callback_data="close_menu"))
+    return markup
+
+# ==========================================
+# 🚨 5. MODERATION COMMAND HANDLERS
+# ==========================================
 @bot.message_handler(commands=['start', 'help'])
-def module_start(message):
-    cmd = extract_cmd(message.text)
-    user_name = message.from_user.first_name
+def send_help(message):
+    bot.reply_to(message, "Welcome to the help menu!", reply_markup=build_help_menu())
 
-    if cmd == 'start':
-        caption_template = get_start_text()
-        caption = caption_template.format(bot_name=get_bot_name(), user_name=user_name, uptime=get_uptime())
-        markup = build_start_markup()
+@bot.message_handler(commands=['settings', 'config'])
+def open_settings(message):
+    if message.chat.type == 'private':
+        return bot.reply_to(message, "⚠️ Group Chat အတွင်း၌သာ သုံးနိုင်ပါသည် ခင်ဗျာ။")
+    if not is_admin(message.chat.id, message.from_user.id):
+        return bot.reply_to(message, "❌ Group Admin သာလျှင် Settings ပြင်ဆင်ခွင့်ရှိပါသည်။")
+
+    bot.reply_to(
+        message, 
+        f"Group: *{message.chat.title}*\n\nSelect one of the settings that you want to change.", 
+        reply_markup=build_settings_page_1(message.chat.id)
+    )
+
+@bot.message_handler(commands=['warn'])
+def warn_user(message):
+    if not is_admin(message.chat.id, message.from_user.id): return
+    if not message.reply_to_message:
+        return bot.reply_to(message, "⚠️ Reply to a user's message to warn.")
+    
+    target = message.reply_to_message.from_user
+    cnt = db.add_warn(message.chat.id, target.id)
+    if cnt >= 3:
         try:
-            bot.send_photo(message.chat.id, photo=get_start_photo(), caption=caption, reply_markup=markup)
-        except Exception:
-            bot.reply_to(message, caption, reply_markup=markup)
+            bot.ban_chat_member(message.chat.id, target.id)
+            db.reset_warns(message.chat.id, target.id)
+            bot.reply_to(message, f"❌ {target.first_name} reached 3/3 warns and was banned.")
+        except Exception as e:
+            bot.reply_to(message, f"Error: {str(e)}")
     else:
-        main_markup = InlineKeyboardMarkup(row_width=2)
-        buttons = [
-            InlineKeyboardButton("👑 Admin & Bans", callback_data="page_1"),
-            InlineKeyboardButton("🛡️ Flood & Blocks", callback_data="page_2"),
-            InlineKeyboardButton("⚙️ Filters & Notes", callback_data="page_3"),
-            InlineKeyboardButton("🌐 Locks & Misc", callback_data="page_4"),
-            InlineKeyboardButton("📜 Rules & Warns", callback_data="page_5"),
-            InlineKeyboardButton("📢 Broadcast & Buttons", callback_data="page_6")
-        ]
-        main_markup.add(*buttons)
-        bot.reply_to(message, "👋 **Group Management Bot Commands Menu:**", reply_markup=main_markup)
+        bot.reply_to(message, f"⚠️ {target.first_name} warned ({cnt}/3).")
 
-@bot.callback_query_handler(func=lambda call: call.data in ["help_menu", "back_start"] or call.data.startswith('page_'))
-def handle_menu_callbacks(call: CallbackQuery):
-    user_name = call.from_user.first_name
+@bot.message_handler(commands=['unwarn'])
+def unwarn_user(message):
+    if not is_admin(message.chat.id, message.from_user.id): return
+    if not message.reply_to_message: return
+    target = message.reply_to_message.from_user
+    db.reset_warns(message.chat.id, target.id)
+    bot.reply_to(message, f"✅ Warns reset for {target.first_name}.")
 
-    if call.data == "help_menu":
-        caption = get_help_text()
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("⬅️ Back", callback_data="back_start"))
-        try:
-            media = InputMediaPhoto(get_help_photo(), caption=caption, parse_mode="Markdown")
-            bot.edit_message_media(media=media, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
-        except Exception: pass
+@bot.message_handler(commands=['ban', 'kick'])
+def ban_user(message):
+    if not is_admin(message.chat.id, message.from_user.id): return
+    if not message.reply_to_message: return
+    target = message.reply_to_message.from_user
+    try:
+        bot.ban_chat_member(message.chat.id, target.id)
+        bot.reply_to(message, f"🚫 Banned {target.first_name}.")
+    except Exception as e:
+        bot.reply_to(message, f"Error: {str(e)}")
 
-    elif call.data == "back_start":
-        caption = get_start_text().format(bot_name=get_bot_name(), user_name=user_name, uptime=get_uptime())
-        markup = build_start_markup()
-        try:
-            media = InputMediaPhoto(get_start_photo(), caption=caption, parse_mode="Markdown")
-            bot.edit_message_media(media=media, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
-        except Exception: pass
+@bot.message_handler(commands=['unban'])
+def unban_user(message):
+    if not is_admin(message.chat.id, message.from_user.id): return
+    if not message.reply_to_message: return
+    target = message.reply_to_message.from_user
+    try:
+        bot.unban_chat_member(message.chat.id, target.id)
+        bot.reply_to(message, f"✅ Unbanned {target.first_name}.")
+    except Exception as e:
+        bot.reply_to(message, f"Error: {str(e)}")
 
-    elif call.data.startswith('page_'):
-        page = call.data.split('_')[1]
-        back_markup = InlineKeyboardMarkup()
-        back_markup.add(InlineKeyboardButton("⬅️ ပင်မ Menu သို့", callback_data="page_main"))
+@bot.message_handler(commands=['addbad'])
+def add_bad(message):
+    if not is_admin(message.chat.id, message.from_user.id): return
+    parts = message.text.split(maxsplit=1)
+    if len(parts) > 1:
+        db.add_badword(message.chat.id, parts[1])
+        bot.reply_to(message, f"✅ Word `{parts[1]}` added to Banned Words.")
 
-        pages_content = {
-            "main": "👋 **Group Management Bot Commands Menu:**",
-            "1": "📌 **Admin & Moderation:**\n\n• `/admin` - Admin စာရင်း\n• `/ban`, `/unban`, `/mute`, `/unmute`, `/kick`\n• `/approve`, `/unapprove`, `/approved`",
-            "2": "📌 **Flood & Blocklists:**\n\n• `/setflood <num>` - Flood Limit\n• `/antiraid on/off` - Anti Raid\n• `/addbad <word>`, `/badwords` - Badwords ပိတ်ရန်\n• `/addblock <item>`, `/blocklist` - Blocklist",
-            "3": "📌 **Filters & Notes:**\n\n• `/save <note> <text>` - Note သိမ်းရန်\n• `/notes`, `/clear <note>`\n• `/filter <key> <text>` - Filter\n• `/stop <key>`",
-            "4": "📌 **Locks & Misc:**\n\n• `/lock <type>`, `/unlock` - Locks\n• `/locks` - Locked List\n• `/id`, `/info` - User Info\n• `/markdown` - Formatting Guide",
-            "5": "📌 **Rules & Warns:**\n\n• `/setrules <text>`, `/rules`\n• `/report` - Admin တိုင်ရန်\n• `/warn`, `/warns`, `/resetwarns`",
-            "6": "📌 **Broadcast & Edit Bot:**\n\n• `/setstart`, `/setstartphoto` - Start ပြင်ရန်\n• `/sethelp`, `/sethelpphoto` - Help ပြင်ရန်\n• `/setname`, `/setlink` - Info/Links ပြင်ရန်\n• `/broadcast <text>` - Broadcast ပို့ရန်"
-        }
-        text_to_show = pages_content.get(page, "ℹ️ အချက်အလက် မရှိပါ။")
-        try:
-            if page == "main":
-                main_markup = InlineKeyboardMarkup(row_width=2)
-                buttons = [
-                    InlineKeyboardButton("👑 Admin & Bans", callback_data="page_1"),
-                    InlineKeyboardButton("🛡️ Flood & Blocks", callback_data="page_2"),
-                    InlineKeyboardButton("⚙️ Filters & Notes", callback_data="page_3"),
-                    InlineKeyboardButton("🌐 Locks & Misc", callback_data="page_4"),
-                    InlineKeyboardButton("📜 Rules & Warns", callback_data="page_5"),
-                    InlineKeyboardButton("📢 Broadcast & Edit Bot", callback_data="page_6")
-                ]
-                main_markup.add(*buttons)
-                bot.edit_message_text(text_to_show, call.message.chat.id, call.message.message_id, reply_markup=main_markup)
-            else:
-                bot.edit_message_text(text_to_show, call.message.chat.id, call.message.message_id, reply_markup=back_markup)
-        except Exception: pass
+@bot.message_handler(commands=['delbad'])
+def del_bad(message):
+    if not is_admin(message.chat.id, message.from_user.id): return
+    parts = message.text.split(maxsplit=1)
+    if len(parts) > 1:
+        db.del_badword(message.chat.id, parts[1])
+        bot.reply_to(message, f"✅ Word `{parts[1]}` removed from Banned Words.")
 
 # ==========================================
-# 🛡️ 7. MANAGEMENT COMMAND HANDLERS
+# 🧩 6. CAPTCHA & NEW MEMBERS
 # ==========================================
-@bot.message_handler(commands=['admin', 'admins', 'addsudo', 'rmsudo', 'sudolist'])
-def module_admin(message):
-    cmd = extract_cmd(message.text)
-    if is_command_disabled(message, cmd): return
+@bot.message_handler(content_types=['new_chat_members'])
+def handle_new_member(message):
+    chat_id = message.chat.id
+    for member in message.new_chat_members:
+        if member.is_bot: continue
+        
+        if db.get_setting(chat_id, "welcome"):
+            bot.send_message(chat_id, f"👋 Welcome {member.first_name} to {message.chat.title}!")
 
-    if cmd in ['addsudo', 'rmsudo', 'sudolist']:
-        if message.from_user.id not in MASTER_OWNERS:
-            return bot.reply_to(message, "❌ Master Bot Owner သာလျှင် Sudo စီမံနိုင်ပါသည်။")
+        if db.get_setting(chat_id, "captcha"):
+            num1, num2 = random.randint(1, 9), random.randint(1, 9)
+            ans = num1 + num2
+            db.add_captcha(chat_id, member.id, ans)
 
-        if cmd == 'sudolist':
-            sudos = db.get_sudos()
-            s_str = "\n".join([f"• `{s}`" for s in sudos])
-            return bot.reply_to(message, f"👑 **Database Sudo Admins စာရင်း:**\n\n{s_str if s_str else 'Sudo မရှိသေးပါ'}")
+            try:
+                bot.restrict_chat_member(chat_id, member.id, can_send_messages=False)
+            except Exception: pass
 
-        target_id = None
-        if message.reply_to_message: target_id = message.reply_to_message.from_user.id
+            markup = InlineKeyboardMarkup(row_width=3)
+            options = [ans, ans + 2, ans - 1]
+            random.shuffle(options)
+            
+            btns = [InlineKeyboardButton(str(opt), callback_data=f"cap_{member.id}_{opt}") for opt in options]
+            markup.add(*btns)
+            
+            bot.send_message(
+                chat_id,
+                f"🧩 **Captcha Check:** [{member.first_name}](tg://user?id={member.id})\n"
+                f"Solve to chat: `{num1} + {num2} = ?`",
+                reply_markup=markup
+            )
+
+# ==========================================
+# 🔄 7. CALLBACK QUERY HANDLER
+# ==========================================
+@bot.callback_query_handler(func=lambda call: True)
+def handle_callbacks(call: CallbackQuery):
+    chat_id = call.message.chat.id
+    user_id = call.from_user.id
+    data = call.data
+
+    if data.startswith("cap_"):
+        parts = data.split("_")
+        target_id, guessed_ans = int(parts[1]), int(parts[2])
+        if user_id != target_id:
+            return bot.answer_callback_query(call.id, "❌ This test is not for you!", show_alert=True)
+
+        real_ans = db.get_captcha(chat_id, target_id)
+        if real_ans and guessed_ans == real_ans:
+            try:
+                bot.restrict_chat_member(chat_id, target_id, can_send_messages=True, can_send_media_messages=True, can_send_other_messages=True)
+            except Exception: pass
+            db.remove_captcha(chat_id, target_id)
+            bot.answer_callback_query(call.id, "✅ Verified! Welcome.")
+            try: bot.delete_message(chat_id, call.message.message_id)
+            except Exception: pass
         else:
-            parts = message.text.split()
-            if len(parts) > 1 and parts[1].isdigit(): target_id = int(parts[1])
-
-        if target_id:
-            if cmd == 'addsudo':
-                db.add_sudo(target_id)
-                bot.reply_to(message, f"👑 User `{target_id}` အား Sudo အဖြစ် သိမ်းဆည်းပြီးပါပြီ။")
-            elif cmd == 'rmsudo':
-                db.remove_sudo(target_id)
-                bot.reply_to(message, f"🗑️ User `{target_id}` အား Sudo စာရင်းမှ ဖယ်ထုတ်လိုက်ပါပြီ။")
-        else:
-            bot.reply_to(message, "⚠️ **Usage:** User စာကို Reply ပြန်၍ `/addsudo` သို့မဟုတ် `/addsudo <User_ID>` ရိုက်ပါ။")
+            bot.answer_callback_query(call.id, "❌ Incorrect answer!", show_alert=True)
         return
 
-    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ ဒီ Command သည် Group Chat ထဲတွင်သာ အလုပ်လုပ်ပါသည်။")
+    if data == "close_menu":
+        try: bot.delete_message(chat_id, call.message.message_id)
+        except Exception: pass
+        return
 
-    try:
-        admins = bot.get_chat_administrators(message.chat.id)
-        admin_list = "\n".join([f"• [{a.user.first_name}](tg://user?id={a.user.id})" for a in admins])
-        bot.reply_to(message, f"👑 **Group Admin စာရင်း:**\n\n{admin_list}")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: `{e}`")
+    if data == "open_settings_msg":
+        if call.message.chat.type == 'private':
+            return bot.answer_callback_query(call.id, "Group အတွင်း၌သာ Settings ကို ဖွင့်နိုင်ပါသည်", show_alert=True)
+        bot.edit_message_text("Select one of the settings that you want to change.", chat_id, call.message.message_id, reply_markup=build_settings_page_1(chat_id))
+        return
 
-@bot.message_handler(commands=['ban', 'unban', 'mute', 'unmute', 'kick'])
-def module_bans(message):
-    cmd = extract_cmd(message.text)
-    if is_command_disabled(message, cmd): return
-    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat ထဲတွင်သာ အသုံးပြုနိုင်ပါသည်။")
-    if not is_admin(message.chat.id, message.from_user.id): return
-    
-    if not message.reply_to_message:
-        return bot.reply_to(message, "⚠️ ပြုလုပ်လိုသော User ၏ စာကို Reply ပြန်ပါ။")
+    if data == "page_1":
+        bot.edit_message_text(f"Group: *{call.message.chat.title}*\n\nSelect one of the settings that you want to change.", chat_id, call.message.message_id, reply_markup=build_settings_page_1(chat_id))
+        return
 
-    target_user = message.reply_to_message.from_user
-    uid = target_user.id
+    if data == "page_2":
+        bot.edit_message_text(f"Group: *{call.message.chat.title}*\n\nSelect one of the settings that you want to change.", chat_id, call.message.message_id, reply_markup=build_settings_page_2(chat_id))
+        return
 
-    try:
-        if cmd == 'ban':
-            bot.ban_chat_member(message.chat.id, uid)
-            bot.reply_to(message, f"🚫 [{target_user.first_name}](tg://user?id={uid}) အား Ban လိုက်ပါပြီ။")
-        elif cmd == 'unban':
-            bot.unban_chat_member(message.chat.id, uid, only_if_banned=True)
-            bot.reply_to(message, f"✅ [{target_user.first_name}](tg://user?id={uid}) အား Unban ပေးလိုက်ပါပြီ။")
-        elif cmd == 'mute':
-            bot.restrict_chat_member(message.chat.id, uid, can_send_messages=False)
-            bot.reply_to(message, f"🔇 [{target_user.first_name}](tg://user?id={uid}) အား Mute လိုက်ပါပြီ။")
-        elif cmd == 'unmute':
-            bot.restrict_chat_member(message.chat.id, uid, can_send_messages=True, can_send_media_messages=True, can_send_other_messages=True)
-            bot.reply_to(message, f"🔊 [{target_user.first_name}](tg://user?id={uid}) အား Unmute ပေးလိုက်ပါပြီ။")
-        elif cmd == 'kick':
-            bot.ban_chat_member(message.chat.id, uid)
-            bot.unban_chat_member(message.chat.id, uid)
-            bot.reply_to(message, f"👞 [{target_user.first_name}](tg://user?id={uid}) အား Group မှ Kick ထုတ်လိုက်ပါပြီ။")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: `{e}`")
+    if data.startswith("toggle_"):
+        if not is_admin(chat_id, user_id):
+            return bot.answer_callback_query(call.id, "❌ Admin သာလျှင် Settings ပြောင်းလဲနိုင်ပါသည်။", show_alert=True)
+        key = data.replace("toggle_", "")
+        new_st = db.toggle_setting(chat_id, key)
+        bot.answer_callback_query(call.id, f"Setting Updated: {'ON' if new_st else 'OFF'}")
+        
+        try: bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=build_settings_page_1(chat_id))
+        except Exception:
+            try: bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=build_settings_page_2(chat_id))
+            except Exception: pass
+        return
 
-@bot.message_handler(commands=['setflood', 'flood', 'antiraid'])
-def module_antiflood_antiraid(message):
-    cmd = extract_cmd(message.text)
-    if is_command_disabled(message, cmd): return
-    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat တွင်သာ အလုပ်လုပ်ပါသည်။")
-    if not is_admin(message.chat.id, message.from_user.id): return
+    if data == "show_badwords":
+        words = db.get_badwords(chat_id)
+        w_str = "\n".join([f"• `{w}`" for w in words]) if words else "တားမြစ်ထားသော စာလုံး မရှိသေးပါ။"
+        bot.answer_callback_query(call.id, f"Banned Words:\n{w_str}", show_alert=True)
+        return
 
-    parts = message.text.split()
-    if cmd == 'antiraid':
-        status = 1 if len(parts) > 1 and parts[1].lower() == 'on' else 0
-        db.set_setting(message.chat.id, "antiraid", status)
-        return bot.reply_to(message, f"🛡️ **Anti-Raid Mode:** `{'ON' if status else 'OFF'}`")
+    if data.startswith("btn_"):
+        feature = data.replace("btn_", "")
+        bot.answer_callback_query(call.id, f"ℹ️ {feature} module is currently monitoring this group.", show_alert=True)
 
-    if len(parts) > 1 and parts[1].isdigit():
-        limit = int(parts[1])
-        db.set_setting(message.chat.id, "flood_limit", limit)
-        bot.reply_to(message, f"🛡️ Antiflood Limit ကို `{limit}` စာစောင်အဖြစ် သတ်မှတ်လိုက်ပါပြီ။")
-    else:
-        curr = db.get_setting(message.chat.id, "flood_limit", 0)
-        bot.reply_to(message, f"🛡️ **လက်ရှိ Antiflood Limit:** `{curr}`\nပြောင်းရန်: `/setflood 5` (0 = ပိတ်ရန်)")
+# ==========================================
+# 🛡️ 8. AUTOMATION, FLOOD & FILTERS
+# ==========================================
+user_flood_tracker = {}
 
-@bot.message_handler(commands=['filter', 'stop', 'save', 'clear', 'notes', 'filters'])
-def module_filters_notes(message):
-    cmd = extract_cmd(message.text)
-    if is_command_disabled(message, cmd): return
-    if message.chat.type == 'private': return bot.reply_to(message, "⚠️ Group Chat တွင်သာ အလုပ်လုပ်ပါသည်။")
-    if not is_admin(message.chat.id, message.from_user.id): return
+def check_flood_and_spam(message):
     chat_id = message.chat.id
+    user_id = message.from_user.id
+    now = time.time()
 
-    if cmd == 'notes':
-        notes = db.get_items("notes", chat_id, "note_name")
-        n_str = "\n".join([f"• `#{n}`" for n in notes])
-        return bot.reply_to(message, f"📝 **Saved Notes:**\n{n_str if n_str else 'မရှိပါ'}")
+    if db.get_setting(chat_id, "antiflood"):
+        if chat_id not in user_flood_tracker: user_flood_tracker[chat_id] = {}
+        if user_id not in user_flood_tracker[chat_id]: user_flood_tracker[chat_id][user_id] = []
 
-    if cmd == 'filters':
-        filts = db.get_items("filters", chat_id, "keyword")
-        f_str = "\n".join([f"• `{f}`" for f in filts])
-        return bot.reply_to(message, f"🔍 **Active Filters:**\n{f_str if f_str else 'မရှိပါ'}")
+        timestamps = user_flood_tracker[chat_id][user_id]
+        timestamps.append(now)
+        user_flood_tracker[chat_id][user_id] = [t for t in timestamps if now - t < 3]
 
-    parts = message.text.split(maxsplit=2)
-    if len(parts) < 2: return bot.reply_to(message, "⚠️ **Usage:** `/save <note> <text>` သို့မဟုတ် `/filter <key> <text>`")
+        if len(user_flood_tracker[chat_id][user_id]) > 4:
+            try:
+                bot.delete_message(chat_id, message.message_id)
+                bot.send_message(chat_id, f"⚠️ Stop flooding [{message.from_user.first_name}](tg://user?id={user_id})!")
+                return True
+            except Exception: pass
+    return False
 
-    key = parts[1].lower()
-    if cmd in ['clear', 'stop']:
-        if cmd == 'clear': db.remove_item("notes", chat_id, "note_name", key)
-        else: db.remove_item("filters", chat_id, "keyword", key)
-        return bot.reply_to(message, f"🗑️ `{key}` အား ဖျက်လိုက်ပါပြီ။")
-
-    if len(parts) < 3: return
-    content = parts[2]
-
-    if cmd == 'save':
-        db.add_item("notes", chat_id, "note_name", "content", key, content)
-        bot.reply_to(message, f"📝 Note `#{key}` သိမ်းဆည်းပြီးပါပြီ။")
-    elif cmd == 'filter':
-        db.add_item("filters", chat_id, "keyword", "reply_text", key, content)
-        bot.reply_to(message, f"🔍 Filter `{key}` သတ်မှတ်ပြီးပါပြီ။")
-
-@bot.message_handler(commands=['stats', 'groups', 'broadcast'])
-def module_owner_tools(message):
-    if not is_owner(message.from_user.id):
-        return bot.reply_to(message, "❌ Master Owner / Sudo Admin သာ အသုံးပြုနိုင်ပါသည်။")
-
-    cmd = extract_cmd(message.text)
-    all_groups = db.get_all_groups()
-
-    if cmd in ['stats', 'groups']:
-        return bot.reply_to(message, f"📊 **Bot Current Stats:**\n\n🏠 ရောက်ရှိနေသော Group အရေအတွက်: `{len(all_groups)}` ခု")
-
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2: return bot.reply_to(message, "⚠️ **Usage:** `/broadcast <စာသားများ>`")
-
-    clean_txt, markup = parse_button_links(parts[1])
-    success, failed = 0, 0
-    status_msg = bot.reply_to(message, f"📢 Groups `{len(all_groups)}` ခုသို့ ပို့နေပါပြီ...")
-
-    for g_id in all_groups:
-        try:
-            bot.send_message(g_id, clean_txt, reply_markup=markup)
-            success += 1
-            time.sleep(0.2)
-        except Exception: failed += 1
-
-    bot.edit_message_text(f"✅ **Broadcast ပို့ဆောင်ပြီးပါပြီ!**\n\n🎯 အောင်မြင်: `{success}`\n❌ မအောင်မြင်: `{failed}`", message.chat.id, status_msg.message_id)
-
-# ==========================================
-# 🔄 8. AUTOMATION & LISTENER ENGINE
-# ==========================================
-@bot.message_handler(func=lambda message: not (message.text and message.text.startswith('/')), content_types=['text', 'new_chat_members', 'left_chat_member', 'sticker', 'document', 'photo'])
-def global_automation_handler(message):
+@bot.message_handler(func=lambda m: True, content_types=['text', 'sticker', 'photo', 'document', 'audio', 'video'])
+def global_message_listener(message):
     chat_id = message.chat.id
     user_id = message.from_user.id
 
-    if message.chat.type in ['group', 'supergroup']:
-        db.add_group(chat_id, message.chat.title)
+    if message.chat.type == 'private' or is_admin(chat_id, user_id): return
+    if check_flood_and_spam(message): return
 
-    approved_list = db.get_items("approved", chat_id, "user_id")
-    is_user_approved = user_id in approved_list
-
-    if message.content_type == 'new_chat_members':
-        welc_text = db.get_setting(chat_id, "welcome_text", None)
-        if welc_text:
-            txt, markup = parse_button_links(welc_text)
-            bot.send_message(chat_id, txt, reply_markup=markup)
-        return
-
-    if message.content_type == 'left_chat_member':
-        gb_text = db.get_setting(chat_id, "goodbye_text", None)
-        if gb_text:
-            txt, markup = parse_button_links(gb_text)
-            bot.send_message(chat_id, txt, reply_markup=markup)
-        return
-
-    if not is_user_approved and not is_admin(chat_id, user_id):
-        locks = db.get_items("locks", chat_id, "lock_type")
-        if 'stickers' in locks and message.content_type == 'sticker':
-            try: bot.delete_message(chat_id, message.message_id)
+    # Link Block
+    if db.get_setting(chat_id, "links") and message.text:
+        if any(domain in message.text.lower() for domain in ["http://", "https://", "t.me/", "telegram.me"]):
+            try: bot.delete_message(chat_id, message.message_id); return
             except Exception: pass
-            return
-        if 'links' in locks and message.text and ("http://" in message.text or "https://" in message.text or "t.me" in message.text):
-            try: bot.delete_message(chat_id, message.message_id)
-            except Exception: pass
-            return
 
-    if message.text and not is_user_approved:
-        text_lower = message.text.lower()
-        badwords = db.get_items("badwords", chat_id, "word")
-        for word in badwords:
-            if word in text_lower:
-                try:
-                    bot.delete_message(chat_id, message.message_id)
-                    bot.send_message(chat_id, f"⚠️ [{message.from_user.first_name}](tg://user?id={user_id}) ပိတ်ပင်ထားသော စာလုံး သုံးနှုန်းသဖြင့် စာအား ဖျက်လိုက်ပါပြီ။")
-                    return
+    # Banned Words
+    if message.text:
+        text_l = message.text.lower()
+        for bad in db.get_badwords(chat_id):
+            if bad in text_l:
+                try: bot.delete_message(chat_id, message.message_id); return
                 except Exception: pass
 
-        limit = db.get_setting(chat_id, "flood_limit", 0)
-        if limit > 0 and not is_admin(chat_id, user_id):
-            now = time.time()
-            if chat_id not in user_flood_tracker: user_flood_tracker[chat_id] = {}
-            if user_id not in user_flood_tracker[chat_id]: user_flood_tracker[chat_id][user_id] = []
+    # Sticker Lock
+    if db.get_setting(chat_id, "stickers") and message.content_type == 'sticker':
+        try: bot.delete_message(chat_id, message.message_id); return
+        except Exception: pass
 
-            timestamps = [t for t in user_flood_tracker[chat_id][user_id] if now - t < 5]
-            timestamps.append(now)
-            user_flood_tracker[chat_id][user_id] = timestamps
-
-            if len(timestamps) >= limit:
-                bot.restrict_chat_member(chat_id, user_id, can_send_messages=False)
-                bot.send_message(chat_id, f"🔇 [{message.from_user.first_name}](tg://user?id={user_id}) စာများစွာ ပို့သဖြင့် Mute လိုက်ပါပြီ။")
-                user_flood_tracker[chat_id][user_id] = []
-                return
-
-        if text_lower.startswith("#"):
-            note_key = text_lower[1:]
-            notes = db.get_kv_items("notes", chat_id, "note_name", "content")
-            if note_key in notes:
-                txt, markup = parse_button_links(notes[note_key])
-                bot.reply_to(message, txt, reply_markup=markup)
-        else:
-            filters = db.get_kv_items("filters", chat_id, "keyword", "reply_text")
-            for f_key, f_val in filters.items():
-                if f_key in text_lower:
-                    txt, markup = parse_button_links(f_val)
-                    bot.reply_to(message, txt, reply_markup=markup)
+    # Media Lock
+    if db.get_setting(chat_id, "media") and message.content_type in ['photo', 'video', 'document', 'audio']:
+        try: bot.delete_message(chat_id, message.message_id); return
+        except Exception: pass
 
 # ==========================================
-# 🚀 9. BOT INFINITY POLLING
+# ⏰ 9. BACKGROUND SCHEDULERS (NIGHT MODE)
+# ==========================================
+def night_mode_scheduler():
+    while True:
+        try:
+            now_time = datetime.now().strftime("%H:%M")
+            db.cursor.execute("SELECT chat_id, night_start, night_end FROM settings WHERE night=1")
+            groups = db.cursor.fetchall()
+            for chat_id, start_t, end_t in groups:
+                if now_time == start_t:
+                    try: bot.send_message(chat_id, "🌙 **Night Mode Activated!** Chat muted.")
+                    except Exception: pass
+                elif now_time == end_t:
+                    try: bot.send_message(chat_id, "☀️ **Night Mode Deactivated!** Good morning!")
+                    except Exception: pass
+        except Exception: pass
+        time.sleep(60)
+
+threading.Thread(target=night_mode_scheduler, daemon=True).start()
+
+# ==========================================
+# 🏃‍♂️ BOT EXECUTION
 # ==========================================
 if __name__ == '__main__':
-    print("🤖 Live Editable Telegram Bot Engine Running!")
+    print("🤖 Full Group Help Engine Running Active...")
     bot.infinity_polling(skip_pending=True)
