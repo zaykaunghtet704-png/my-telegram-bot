@@ -1,16 +1,14 @@
-import threading
 import telebot
-from config import BOT_TOKEN, PORT
-from handlers import register_handlers
-from services import start_flask, start_night_mode_scheduler
+from handlers import register_all_handlers
 
-bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
+# ⚠️ Thanthi Bot Token ထည့်ပါ
+BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN_HERE"
 
-register_handlers(bot)
+bot = telebot.TeleBot(BOT_TOKEN)
 
-threading.Thread(target=start_flask, args=(PORT,), daemon=True).start()
-start_night_mode_scheduler(bot)
+# Register Handlers
+register_all_handlers(bot)
 
-if __name__ == '__main__':
-    print("🚀 Bot is running successfully...")
-    bot.infinity_polling(skip_pending=True)
+if __name__ == "__main__":
+    print("🚀 All-In-One DIGI & Group Help Bot Running...")
+    bot.infinity_polling()
