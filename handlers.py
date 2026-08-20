@@ -1,114 +1,83 @@
-import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-from keyboards import (
-    get_main_keyboard, get_panel_grid_keyboard, get_punish_guide_keyboard,
-    get_tools_keyboard, get_lists_keyboard, get_settings_p1_keyboard,
-    get_settings_p2_keyboard, get_stats_keyboard, get_owner_keyboard
-)
+import psutil
+from telegram import Update
+from telegram.ext import ContextTypes
+import config
+import keyboards
+from database import db
 
-# ⚠️ မိမိ Telegram User ID ပြောင်းပါ
-OWNER_ID = 7974865879 
+# Counter tracking in memory
+message_counters = {}
 
-def register_all_handlers(bot: telebot.TeleBot):
+async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    await db.get_or_create_user(user.id, user.username or user.first_name)
+    
+    caption = (
+        f"👋 မင်္ဂလာပါ {user.first_name}!\n\n"
+        "✨ **Enterprise Card Collector Bot** မှ ကြိုဆိုပါတယ်။\n"
+        "ဂိမ်းကစားရန် နှင့် ကဒ်များ စုဆောင်းရန် အောက်ပါ Link များကို အသုံးပြုနိုင်ပါသည်။"
+    )
+    
+    await update.message.reply_photo(
+        photo="https://picsum.photos/800/400",
+        caption=caption,
+        reply_markup=keyboards.get_start_keyboard(),
+        parse_mode="Markdown"
+    )
 
-    # --- 1. Commands ---
-    @bot.message_handler(commands=['start'])
-    def cmd_start(message):
-        bot_username = bot.get_me().username
-        text = (
-            "⚙️ **DIGI ANTI & ADVANCED GROUP HELP**\n\n"
-            "**group:**\n"
-            "✅ Protection against spam\n"
-            "✅ Advanced filtering of words & phrases\n"
-            "✅ Precise user access control\n"
-            "✅ Advanced lock & restriction system\n\n"
-            "**Setup:**\n"
-            "1. Add Bot to group & Promote to Admin.\n"
-            "2. Use `/panel` to configure settings."
+async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = (
+        "📜 **အသုံးပြုနိုင်သော Commands များ**\n\n"
+        "🎮 **User Commands:**\n"
+        "• `/claim` - ၁၂ နာရီ ၁ ကြိမ် အခမဲ့ ကဒ်ယူရန်\n"
+        "• `/nclaim` - ၄ နာရီ ၁ ကြိမ် ၂ ကဒ် ယူရန်\n"
+        "• `/inv` - မိမိ ပိုင်ဆိုင်သော ကဒ်များ ကြည့်ရန်\n"
+        "• `/profile` - မိမိ အကောင့်အချက်အလက် ကြည့်ရန်\n\n"
+        "⚙️ **Admin Commands:**\n"
+        "• `/sysinfo` - Server Status (RAM/CPU) စစ်ဆေးရန်"
+    )
+    await update.message.reply_text(help_text, parse_mode="Markdown")
+
+async def sysinfo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in config.ADMIN_IDS:
+        return
+        
+    cpu = psutil.cpu_percent()
+    ram = psutil.virtual_memory().percent
+    
+    info = (
+        "⚙️ **Render Server Status**\n\n"
+        f"🖥 **CPU Usage:** {cpu}%\n"
+        f"💾 **RAM Usage:** {ram}%\n"
+        "🟢 **Status:** Operational"
+    )
+    await update.message.reply_text(info, parse_mode="Markdown")
+
+async def message_spawn_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_chat or update.effective_chat.type == "private":
+        return
+
+    chat_id = update.effective_chat.id
+    message_counters[chat_id] = message_counters.get(chat_id, 0) + 1
+
+    if message_counters[chat_id] >= config.SPAWN_MESSAGE_LIMIT:
+        message_counters[chat_id] = 0
+        await context.bot.send_photo(
+            chat_id=chat_id,
+            photo="https://picsum.photos/400/600",
+            caption="✨ **Rare Card တစ်ကဒ် ကျလာပါပြီ!**\nပထမဆုံး Grab နှိပ်သူ ရရှိပါမည်။",
+            reply_markup=keyboards.get_spawn_keyboard(),
+            parse_mode="Markdown"
         )
-        bot.send_message(message.chat.id, text, parse_mode="Markdown", reply_markup=get_main_keyboard(bot_username))
 
-    @bot.message_handler(commands=['panel', 'settings'])
-    def cmd_panel(message):
-        txt = "⚙️ **Group Management Panel**\n\n• Please select the desired section:"
-        bot.send_message(message.chat.id, txt, reply_markup=get_panel_grid_keyboard())
-
-    @bot.message_handler(commands=['owner', 'admin'])
-    def cmd_owner(message):
-        if message.from_user.id != OWNER_ID:
-            return bot.reply_to(message, "❌ **Access Denied!** Owner only command.")
-        bot.reply_to(message, "👑 **Bot Owner Master Control**", reply_markup=get_owner_keyboard())
-
-    # --- 2. Moderation Commands (Group Admin Actions) ---
-    @bot.message_handler(commands=['ban'])
-    def cmd_ban(message):
-        if message.reply_to_message:
-            target = message.reply_to_message.from_user
-            bot.ban_chat_member(message.chat.id, target.id)
-            bot.reply_to(message, f"🚷 User **{target.first_name}** has been banned.")
-
-    @bot.message_handler(commands=['mute'])
-    def cmd_mute(message):
-        if message.reply_to_message:
-            target = message.reply_to_message.from_user
-            bot.restrict_chat_member(message.chat.id, target.id, can_send_messages=False)
-            bot.reply_to(message, f"🔇 User **{target.first_name}** has been muted.")
-
-    @bot.message_handler(commands=['warn'])
-    def cmd_warn(message):
-        if message.reply_to_message:
-            target = message.reply_to_message.from_user
-            bot.reply_to(message, f"⚠️ Warning issued to **{target.first_name}** (1/3).")
-
-    # --- 3. Callback Queries Handler ---
-    @bot.callback_query_handler(func=lambda call: True)
-    def handle_callbacks(call):
-        chat_id = call.message.chat.id
-        msg_id = call.message.message_id
-        data = call.data
-
-        # Panel Navigation
-        if data == "open_panel_grid":
-            txt = "⚙️ **Group Management Panel**\n\n• Please select the desired section:"
-            bot.edit_message_text(txt, chat_id, msg_id, reply_markup=get_panel_grid_keyboard(), parse_mode="Markdown")
-
-        elif data == "open_panel_select":
-            txt = "⚙️ **Groups Management Section**\n\nSelect a section below to configure your group:"
-            bot.edit_message_text(txt, chat_id, msg_id, reply_markup=get_panel_grid_keyboard(), parse_mode="Markdown")
-
-        # Sections
-        elif data == "panel_help":
-            txt = "📖 **Guide for Punishing Users:**\n\nSelect a action type to learn commands:"
-            bot.edit_message_text(txt, chat_id, msg_id, reply_markup=get_punish_guide_keyboard(), parse_mode="Markdown")
-
-        elif data == "panel_tools":
-            txt = "🛠️ **Group Tools & Utility Functions:**"
-            bot.edit_message_text(txt, chat_id, msg_id, reply_markup=get_tools_keyboard(), parse_mode="Markdown")
-
-        elif data == "panel_lists":
-            txt = (
-                "📋 **Group Member Lists Overview**\n\n"
-                "• Owners: 1 | Mods: 6\n"
-                "• Banned: 2 | Muted: 0\n"
-                "• Warned Members: 1"
-            )
-            bot.edit_message_text(txt, chat_id, msg_id, reply_markup=get_lists_keyboard(), parse_mode="Markdown")
-
-        elif data == "nav_settings_p1":
-            txt = "⚙️ **Advanced Settings Part 1:**"
-            bot.edit_message_text(txt, chat_id, msg_id, reply_markup=get_settings_p1_keyboard(), parse_mode="Markdown")
-
-        elif data == "nav_settings_p2":
-            txt = "⚙️ **Advanced Settings Part 2:**"
-            bot.edit_message_text(txt, chat_id, msg_id, reply_markup=get_settings_p2_keyboard(), parse_mode="Markdown")
-
-        elif data == "panel_stats":
-            txt = "📊 **Group Analytics & Activity Overview:**"
-            bot.edit_message_text(txt, chat_id, msg_id, reply_markup=get_stats_keyboard(), parse_mode="Markdown")
-
-        elif data == "action_close":
-            bot.edit_message_text("• Panel has been closed successfully! ✅", chat_id, msg_id)
-
-        # Popup Alerts for Sub-Items
-        else:
-            bot.answer_callback_query(call.id, f"Setting updated: {data}", show_alert=False)
+async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "claim_spawn_card":
+        user = query.from_user
+        await db.get_or_create_user(user.id, user.username or user.first_name)
+        await query.edit_message_caption(
+            caption=f"🎉 **{user.first_name}** မှ ကဒ်ကို ပထမဆုံး Grab ရရှိသွားပါသည်။!",
+            parse_mode="Markdown"
+        )
