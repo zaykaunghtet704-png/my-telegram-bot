@@ -1,20 +1,39 @@
-import os
-import telebot
-from handlers import register_all_handlers
+import logging
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    filters
+)
+import config
+import handlers
+from services import keep_alive
 
-# Render Environment Variables မှ BOT_TOKEN ကို ဖတ်ယူခြင်း
-# (Environment Variable မရှိပါက fallback အဖြစ် တိုက်ရိုက် ထည့်သွင်းထားသော Token ကို သုံးပါမည်)
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8886077155:AAET1U9CYG7tsjTRLVxAutz")
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-# Token ရှိ/မရှိ နှင့် ပုံစံ မှန်/မမှန် စစ်ဆေးခြင်း
-if not BOT_TOKEN or ":" not in BOT_TOKEN:
-    raise ValueError("Invalid BOT_TOKEN! Token must contain a colon (:).")
+def main():
+    # Flask Health Check Service ကို Background တွင် စတင်ခြင်း
+    keep_alive()
+    
+    # Application Build ပြုလုပ်ခြင်း
+    application = Application.builder().token(config.BOT_TOKEN).build()
 
-bot = telebot.TeleBot(BOT_TOKEN)
+    # Handlers များ ထည့်သွင်းခြင်း
+    application.add_handler(CommandHandler("start", handlers.start_handler))
+    application.add_handler(CommandHandler("help", handlers.help_handler))
+    application.add_handler(CommandHandler("sysinfo", handlers.sysinfo_handler))
+    
+    application.add_handler(CallbackQueryHandler(handlers.callback_query_handler))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.message_spawn_listener))
 
-# Handlers များကို Register လုပ်ခြင်း
-register_all_handlers(bot)
+    # Bot ကို စတင်ခြင်း
+    logger.info("Starting Telegram Bot Engine...")
+    application.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    print("🚀 DIGI Group Help Management Bot is running on Render...")
-    bot.infinity_polling(skip_pending=True)
+    main()
