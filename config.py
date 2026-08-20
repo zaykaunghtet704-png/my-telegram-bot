@@ -1,13 +1,15 @@
 import os
+from dotenv import load_dotenv
 
-# Telegram Bot Token (BotFather ထံမှ ရရှိသော Token)
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8886077155:AAET1U9CXGZtaiIBLYxAutzFKFe-BkQpVno")
+load_dotenv()
 
-# Bot Master Owners / Bot Admin များ၏ User ID များ
-MASTER_OWNERS = [7974865879, 7177628115, 8438417346]
+# Telegram Bot Config
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "123456789").split(",") if x.strip()]
 
-# Database File Name
-DB_NAME = "group_bot_data.db"
+# Database Config
+MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://user:pass@cluster.mongodb.net/cardbot")
 
-# Web Server Port (Hosting Server များတွင် အသုံးပြုရန်)
-PORT = int(os.environ.get("PORT", 8080))
+# Game Mechanics Config
+SPAWN_MESSAGE_LIMIT = int(os.getenv("SPAWN_MESSAGE_LIMIT", "100"))
+PORT = int(os.getenv("PORT", "10000"))
